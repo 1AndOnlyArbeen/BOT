@@ -12,10 +12,21 @@ from agent.seed_patterns_backend_deep import BACKEND_DEEP_SEED
 from agent.seed_patterns_remix import REMIX_SEED
 from agent.seed_patterns_shopify import SHOPIFY_SEED
 from agent.seed_patterns_cybersecurity import CYBERSECURITY_SEED
+from agent.seed_patterns_golang import GOLANG_SEED
+from agent.seed_patterns_flutter import FLUTTER_SEED
+from agent.seed_patterns_react_native import REACT_NATIVE_SEED
+from agent.seed_patterns_dotnet import DOTNET_SEED
+from agent.seed_patterns_laravel import LARAVEL_SEED
+from agent.seed_patterns_cpp import CPP_SEED
 from agent.code_library import save_pattern
 
 
-ALL_PATTERNS = SEED + NODEJS_SEED + WEB_SEED + BACKEND_DEEP_SEED + REMIX_SEED + SHOPIFY_SEED + CYBERSECURITY_SEED
+ALL_PATTERNS = (
+    SEED + NODEJS_SEED + WEB_SEED + BACKEND_DEEP_SEED
+    + REMIX_SEED + SHOPIFY_SEED + CYBERSECURITY_SEED
+    + GOLANG_SEED + FLUTTER_SEED + REACT_NATIVE_SEED
+    + DOTNET_SEED + LARAVEL_SEED + CPP_SEED
+)
 
 
 def run() -> dict:

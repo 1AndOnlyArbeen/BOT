@@ -9,8 +9,9 @@ from agent import episodic, knowledge_graph as kg
 
 router = APIRouter()
 
-MAX_FILE_BYTES = 5 * 1024 * 1024     # 5 MB cap per upload
 MAX_ENTRY_CHARS = 50_000             # split larger pastes/files into chunks of this size
+                                     # (per-upload size cap removed — uploads are unbounded;
+                                     # large files are still chunked into vector-store entries below)
 
 
 class AddFact(BaseModel):
@@ -78,8 +79,6 @@ def add_bulk_text(body: AddBulkText) -> dict:
 async def add_from_file(file: UploadFile = File(...), label: str = Form("")) -> dict:
     """Save the contents of an uploaded text file (txt/md/log/code/json/csv) as memory."""
     raw = await file.read()
-    if len(raw) > MAX_FILE_BYTES:
-        raise HTTPException(413, f"file too large (max {MAX_FILE_BYTES // 1024 // 1024} MB)")
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:

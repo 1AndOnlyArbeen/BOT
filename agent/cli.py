@@ -218,10 +218,12 @@ class CLI:
 
     # -- ui helpers --
     def banner(self) -> None:
+        from config import WORKSPACE_DIR
         target = self.remote or "direct"
         self.console.print(Panel.fit(
             f"[bold cyan]ULTRON[/bold cyan] CLI · mode=[yellow]{self.mode}[/yellow] · "
             f"session=[green]{self.session_id}[/green] · {target}\n"
+            f"[dim]workspace:[/dim] [green]{WORKSPACE_DIR}[/green]\n"
             f"[dim]/help for commands · Ctrl-D to quit[/dim]",
             border_style="cyan",
         ))

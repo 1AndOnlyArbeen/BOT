@@ -42,10 +42,14 @@ def _save(data: dict) -> None:
     )
 
 
-def set_last_written(path: Path | str) -> None:
-    """Called by file_tools.write_file after a successful write."""
+def set_last_written(path: Path | str | None) -> None:
+    """Called by file_tools.write_file after a successful write.
+
+    Pass None to reset (e.g. at the start of a new agent turn) so verifiers
+    don't act on stale state from a previous turn.
+    """
     global _LAST_WRITTEN
-    _LAST_WRITTEN = Path(path)
+    _LAST_WRITTEN = Path(path) if path is not None else None
 
 
 def get_last_written() -> Path | None:

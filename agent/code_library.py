@@ -52,7 +52,7 @@ def save_pattern(request: str, code: str, language: str = "python", success: boo
     return 1
 
 
-def find_similar(request: str, k: int = 3, min_score: float = 0.0) -> list[dict]:
+def find_similar(request: str, k: int = 5, min_score: float = 0.0) -> list[dict]:
     if not request.strip():
         return []
     try:
@@ -80,7 +80,7 @@ def _extract_code(text: str) -> str:
 def search_code_library(request: str) -> str:
     """Search past code patterns YOU have written for THIS user. Always check here BEFORE searching the web —
     if you've solved a similar request before, reuse the pattern."""
-    hits = find_similar(request, k=3)
+    hits = find_similar(request, k=5)
     if not hits:
         return "(no similar past code)"
     out = []

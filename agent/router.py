@@ -26,7 +26,10 @@ CATEGORIES = {
     "media": ["youtube download", "yt-dlp", "record audio", "mp3", "video"],
     "git": ["git ", "commit", "branch", "checkout", "diff", "pull request"],
     "code": ["read file", "write file", "edit file", "run python", "function ",
-             "refactor", "implement", "fix bug", "create script"],
+             "refactor", "implement", "fix bug", "create script",
+             "save this as", "save it as", "save that as", "save as",
+             "recall ", "pull up the", "give me the", "show me the",
+             "list artifacts", "what did i save"],
     "docs": ["pdf", "markdown", "html", "document", "report"],
     "dev": ["pip", "apt", "package", "install", "format", "black", "env"],
     "knowledge": ["my doc", "uploaded", "rag", "explain", "what is", "how does",
@@ -148,7 +151,7 @@ def tools_for_categories(cats: set[str]) -> list:
     if "schedule" in cats: bundle += SCHEDULER_TOOLS
     if "media" in cats: bundle += MEDIA_TOOLS
     if "git" in cats: bundle += GIT_TOOLS
-    if "code" in cats: bundle += FILE_TOOLS + DEV_TOOLS
+    if "code" in cats: bundle += FILE_TOOLS + ARTIFACT_TOOLS + DEV_TOOLS
     if "docs" in cats: bundle += DOCUMENT_TOOLS
     if "dev" in cats: bundle += DEV_TOOLS
     if "knowledge" in cats: bundle += KNOWLEDGE_TOOLS

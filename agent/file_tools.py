@@ -21,6 +21,25 @@ def _resolve(rel_path: str) -> Path:
 
 
 @tool
+def make_folder(path: str) -> str:
+    """Create a folder (and any missing parents) inside the workspace. Idempotent — succeeds if it already exists.
+
+    Use when the user says: "make folder X", "create directory Y", "mkdir Z".
+    Path is relative to the workspace root.
+    """
+    if not path.strip():
+        return "[error] folder path required"
+    try:
+        target = _resolve(path)
+    except ValueError as e:
+        return f"[error] {e}"
+    if target.exists() and target.is_file():
+        return f"[error] {path} already exists as a file"
+    target.mkdir(parents=True, exist_ok=True)
+    return f"✓ folder ready: {target}"
+
+
+@tool
 def list_files(path: str = ".") -> str:
     """List files and folders in the workspace. Use '.' for root."""
     try:
@@ -77,7 +96,7 @@ def write_file(path: str, content: str) -> str:
         snapshot(target, op="write")
     target.write_text(content, encoding="utf-8")
     set_last_written(target)
-    return f"✓ wrote {path} ({len(content)} chars)"
+    return f"✓ wrote {target} ({len(content)} chars)"
 
 
 @tool
@@ -190,6 +209,7 @@ def list_backups(path: str = "") -> str:
 
 FILE_TOOLS = [
     list_files, read_file, write_file, edit_file,
+    make_folder,
     run_python_file, delete_file,
     undo_last_edit, list_backups,
 ]

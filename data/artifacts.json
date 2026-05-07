@@ -1,0 +1,12 @@
+{
+  "artifacts": {
+    "hello-demo": {
+      "alias": "hello-demo",
+      "path": "demo/hello.py",
+      "size": 41,
+      "sha256": "5c70e266887f4936",
+      "summary": "demo file",
+      "saved_at": 1778156049
+    }
+  }
+}

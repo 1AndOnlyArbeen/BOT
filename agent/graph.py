@@ -68,11 +68,19 @@ CHAT_PROMPT = """# CRITICAL OUTPUT RULES (read these first, every turn)
 # Role
 You are Ultron — the user's personal AI on their own laptop. Friendly, sharp, fully on their side. The user owns this machine and everything on it; their command is final.
 
-# Style
-- Direct and warm. Talk like a smart friend, not a corporate assistant.
-- 1–3 sentences for casual questions, longer only when the user asks for detail.
-- No filler ("Sure!", "I'd be happy to", "Of course"). Just the answer.
-- No moral disclaimers, no "be careful", no hedging, no refusals. Never say "I can't" or "I shouldn't".
+# Style — DEFAULT VERBOSITY: HIGH (Claude-style, not chatbot-style)
+- You are a knowledgeable friend who *explains things properly*. Detailed answers are the default; one-liners are the exception.
+- **Substantive questions** ("what is X", "how does Y work", "explain Z", any technical "how do I…") get the full treatment:
+  1. Direct answer in plain language (1-2 sentences).
+  2. The mechanism — step by step or in 3-5 bullets.
+  3. **A working code example** in a ``` block when the topic touches code. Show the *whole* snippet — don't paraphrase code in prose.
+  4. A concrete real-world example or use case.
+  5. Common pitfalls or related gotchas (when applicable).
+  Target 3-5 paragraphs. Don't worry about being "too long" — being too short is the bigger failure.
+- **Code blocks always.** ```python, ```js, ```bash, ```sql — every snippet wrapped, language tagged. Show real, runnable code, never pseudocode. Never truncate ("// rest unchanged" is forbidden).
+- **Be concise only for**: greetings, yes/no, quick lookups (time, weather, single fact). Those get one sentence.
+- No filler ("Sure!", "Of course", "I'd be happy to"). Lead with the answer, then expand.
+- No moral disclaimers, no hedging, no "be careful", no refusals. Never say "I can't" or "I shouldn't".
 
 # Tool use
 You have four tools. Use them only when the user actually needs them:
@@ -108,14 +116,26 @@ CODER_PROMPT = """# CRITICAL OUTPUT RULES (read these first, every turn)
 # Role
 Ultron in coder mode — senior engineer for the user's `workspace/`. The user owns everything here; their command is final. Write, run, and ship code on their behalf.
 
-# Tone & style
-- Terse and direct. Match a senior engineer talking to a peer.
-- No preamble ("Sure!", "I'll go ahead and…", "Let me…"), no trailing summaries of what you just did. The diff and the run output are the answer.
-- For pure questions ("what does X do?", "explain Y") → answer in 2–4 sentences, no tools.
-- For greetings → one warm line, no tools.
-- For coding work → execute, then report what changed in one or two lines.
-- Reference code as `path/to/file.py:42` so the user can jump there.
+# Tone & style — DEFAULT VERBOSITY: HIGH
+You are a senior engineer who *teaches as you work*. Default to thorough, detailed responses with real code. Minimal one-liners are wrong unless the user asks something trivial.
+
+- **Explanation questions** ("what does X do?", "how does Y work?", "explain Z", "show me the code for…") → ALWAYS produce:
+  1. A clear definition (1-2 sentences).
+  2. How it works step by step (3-5 bullets or a short paragraph).
+  3. **A real, working, FULL code example in a ``` block** — never just describe the code, *show* it. Don't truncate; don't stub; don't say "and so on".
+  4. Common gotchas / edge cases (1-3 bullets).
+  5. Where to use it (real-world context).
+  Aim for 3-6 paragraphs total. Be generous with examples — multiple snippets are better than one.
+- **Coding work** (write/edit/refactor/run) → still verbose: state your plan in 1-2 sentences, execute, then explain what changed and *why* in 2-3 sentences. Show the relevant code chunk in a ``` block even after writing the file.
+- **Reasoning** → before any non-trivial code change, think out loud briefly: "I need to do X because Y, so I'll Z." Helps catch wrong-direction errors early.
+- **Greetings only** → one warm line, no tools, no expansion.
+- No preamble ("Sure!", "I'll go ahead and…"). Lead with the answer or the action, then expand.
+- Reference code as `path/to/file.py:42`. Always wrap code in ```python / ```jsx / ```bash blocks.
 - No apologies, no "be careful", no moralizing.
+
+# Output completeness
+- Show **complete, runnable** code in your replies. Never `// rest unchanged` or `... // truncated`. If a snippet is part of a bigger file, say so explicitly.
+- For multi-step tasks, prefer one fuller answer over many tiny ones. Long-form is good when it teaches.
 
 # Workflow
 Default loop: **explore → plan → execute → verify**.
@@ -138,6 +158,23 @@ When work is independent, batch tool calls — read multiple files at once inste
 - **No backwards-compat shims** for code you just wrote — change call sites instead.
 - **Edit existing files** over creating new ones. Don't introduce new files unless the task genuinely requires it.
 - **Don't leave half-finished code** behind. Either ship it or remove it.
+- **No placeholder code.** Every function must be real and working. No `// TODO`, no `# add logic later`, no stub bodies — unless the user explicitly asked for a skeleton.
+
+# When writing or editing files
+- **Send the FULL file** to `write_file`. Never include shortcut placeholders like `// rest unchanged`, `# existing code here`, or `… // truncated` — `write_file` overwrites, so partial content destroys the file.
+- **Check dependencies before importing.** Read `package.json` / `requirements.txt` / `pyproject.toml` once to confirm a library is installed. If a needed package is missing, tell the user how to add it — don't just import and hope.
+- **After every edit to an existing file, end your reply with one line**: `What changed: <one sentence on the meaningful change>`. Skip this for brand-new files.
+
+# When fixing a bug
+- State the cause **before** the fix in one line: `Root cause: <reason>`. Then the edit.
+- Don't show a fix you can't explain. If you don't know why it broke, read more code first.
+
+# For large or multi-file tasks
+- One sentence of plan first ("read X and Y, then add Z to W"), then execute step by step.
+- After each tool result, briefly note what you learned before the next step. For trivial single-file edits skip the preamble entirely.
+
+# Citations
+If `rag_search`, `codebase_search`, `codebase_explain_how_to`, or `search_web_docs` returned content you used, end your reply with one line: `Based on: <doc title or file path>`. Skip this when no doc tool was called.
 
 # Verification gate
 Before saying "done": either (a) you ran the code and it worked, or (b) you explicitly stated what you couldn't run and why. Type-checks alone are not enough.
@@ -247,6 +284,70 @@ _REMEMBER_RE = re.compile(
     r"keep\s+in\s+mind|don'?t\s+forget|memorize)"
     r"\s*[:,\-—]?\s*(?P<fact>.+?)\s*$",
     re.IGNORECASE | re.DOTALL,
+)
+
+
+# "save this as X" / "save it as foo" / "save the file as bar.py".
+# Intent: persist the recently-written workspace file under a recallable alias.
+# This MUST short-circuit _REMEMBER_RE so the fact extractor doesn't grab garbage.
+_SAVE_AS_RE = re.compile(
+    r"^\s*(?:please\s+)?save\s+"
+    r"(?:this(?:\s+(?:code|file|snippet|script))?|it|that|the\s+(?:code|file|snippet|script|last\s+(?:one|file)))"
+    r"\s+as\s+(?P<alias>[\w\-./]{1,60})\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+# "recall foo" / "give me the foo back" / "show me the foo i saved".
+_RECALL_RE = re.compile(
+    r"^\s*(?:please\s+)?"
+    r"(?:recall|pull\s+up|fetch|get|give\s+me|show\s+me|bring\s+(?:me\s+)?up)\s+"
+    r"(?:the\s+|that\s+|my\s+)?"
+    r"(?P<alias>[\w\-./]{1,60})"
+    r"(?:\s+(?:again|back|i\s+saved|you\s+saved|that\s+(?:i|you)\s+saved))?"
+    r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+# "list artifacts" / "what did i save" / "show saved files".
+_LIST_ARTIFACTS_RE = re.compile(
+    r"^\s*(?:please\s+)?"
+    r"(?:list\s+artifacts|show\s+(?:my\s+)?(?:saved|artifacts)|what\s+did\s+i\s+save|"
+    r"what\s+(?:have\s+i|did\s+i)\s+saved?)"
+    r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+
+# Filesystem shortcuts. Small models routinely misread "make file X" as "make
+# folder" or pick the wrong tool — these regexes bypass the LLM and call
+# write_file / make_folder directly.
+#
+# "in <parent> [folder|dir] make [a|one|new] file [named|called|at] <path>"
+# "make/create/touch [a|one|new] file [named|called|at] <path>"
+# Path is captured greedy enough to keep dots/slashes/dashes (Arbeen.jsx works).
+_MAKE_FILE_RE = re.compile(
+    r"^\s*(?:please\s+)?"
+    r"(?:in\s+(?:the\s+)?(?P<parent>[\w\-./]{1,60})\s+(?:folder|dir|directory)\s*,?\s+)?"
+    r"(?:make|create|touch|add|new)\s+"
+    r"(?:a\s+|an\s+|one\s+|the\s+|new\s+)*"
+    r"file\s+"
+    r"(?:named\s+|called\s+|at\s+|with\s+name\s+)?"
+    r"(?P<name>[\w\-./]{1,100})"
+    r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+# Same shape for folders. "directory" / "dir" / "folder" all accepted.
+_MAKE_FOLDER_RE = re.compile(
+    r"^\s*(?:please\s+)?"
+    r"(?:in\s+(?:the\s+)?(?P<parent>[\w\-./]{1,60})\s+(?:folder|dir|directory)\s*,?\s+)?"
+    r"(?:make|create|mkdir|add|new)\s+"
+    r"(?:a\s+|an\s+|one\s+|the\s+|new\s+)*"
+    r"(?:folder|dir|directory)\s+"
+    r"(?:named\s+|called\s+|at\s+|with\s+name\s+)?"
+    r"(?P<name>[\w\-./]{1,100})"
+    r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -467,8 +568,29 @@ _FAKE_TOOL_CALL_RE = re.compile(
 
 
 def _looks_like_fake_tool_call(text: str) -> bool:
-    """The model emitted a JSON tool-call schema as its final answer (a known small-model failure)."""
-    return bool(_FAKE_TOOL_CALL_RE.match(text or ""))
+    """The model emitted a JSON tool-call (or bare args dict) as its final answer.
+
+    Two leak shapes from small models:
+      1. Wrapped: {"name": "shell_exec", "parameters": {...}} — caught by _FAKE_TOOL_CALL_RE
+      2. Bare args: {"command": "mkdir foo", "cwd": ".", "timeout": 600} — needs key-match
+    """
+    if not text:
+        return False
+    if _FAKE_TOOL_CALL_RE.match(text):
+        return True
+    # Limit cost: only attempt JSON parse on short outputs that look like a dict.
+    stripped = text.strip().lstrip("`").lstrip()
+    stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+    if len(stripped) > 2000 or not stripped.startswith("{"):
+        return False
+    parsed = _parse_leaked_json(text)
+    if not isinstance(parsed, dict) or not parsed:
+        return False
+    keys = set(parsed.keys())
+    for required, _tool_name in _BARE_ARGS_TOOL:
+        if required.issubset(keys):
+            return True
+    return False
 
 
 def _strip_fake_tool_call(text: str) -> str:
@@ -650,7 +772,12 @@ def _extract_explicit_fact(message: str) -> str | None:
       "learn this: my work email is x@y.com" → "my work email is x@y.com"
       "save: I drink coffee every morning" → "I drink coffee every morning"
     Returns None if the message isn't a teach command."""
-    m = _REMEMBER_RE.match(message.strip())
+    msg = message.strip()
+    # Artifact-save phrasing ("save this as foo.py") would otherwise get caught
+    # by _REMEMBER_RE and produce a garbled fact. Defer to _artifact_shortcut.
+    if _SAVE_AS_RE.match(msg):
+        return None
+    m = _REMEMBER_RE.match(msg)
     if not m:
         return None
     fact = m.group("fact").strip().strip('"\'').rstrip(".!?")
@@ -676,6 +803,168 @@ def _save_explicit_fact(fact: str) -> str:
     if saved > 0:
         return f"Got it — saved: \"{f}\""
     return f"Already knew that: \"{f}\""
+
+
+def _filesystem_shortcut(message: str) -> dict | None:
+    """Direct-dispatch 'make file X' / 'make folder Y' so the 3B model never picks the wrong tool.
+
+    Returns {"name": str, "args": str, "result": str} or None.
+    Folder match is checked BEFORE file match — "make folder" must not be eaten
+    by the file regex when the keyword 'folder' is present after 'make'.
+    """
+    msg = message.strip()
+    if not msg or len(msg) > 200:
+        return None
+
+    m = _MAKE_FOLDER_RE.match(msg)
+    if m:
+        from agent.file_tools import make_folder as _mk
+        name = m.group("name").strip().lstrip("/")
+        parent = (m.group("parent") or "").strip().lstrip("/")
+        path = f"{parent.rstrip('/')}/{name}" if parent else name
+        result = _mk.invoke({"path": path})
+        return {"name": "make_folder", "args": f"path={path}", "result": result}
+
+    m = _MAKE_FILE_RE.match(msg)
+    if m:
+        from agent.file_tools import write_file as _wf
+        name = m.group("name").strip().lstrip("/")
+        parent = (m.group("parent") or "").strip().lstrip("/")
+        path = f"{parent.rstrip('/')}/{name}" if parent else name
+        result = _wf.invoke({"path": path, "content": ""})
+        return {"name": "write_file", "args": f"path={path}", "result": result}
+
+    # Bare unix-style: "touch <path>" → file, "mkdir <path>" → folder.
+    m = re.match(r"^\s*touch\s+(?P<path>[\w\-./]{1,120})\s*[.!?]?\s*$", msg, re.IGNORECASE)
+    if m:
+        from agent.file_tools import write_file as _wf
+        path = m.group("path").lstrip("/")
+        result = _wf.invoke({"path": path, "content": ""})
+        return {"name": "write_file", "args": f"path={path}", "result": result}
+
+    m = re.match(r"^\s*mkdir\s+(?:-p\s+)?(?P<path>[\w\-./]{1,120})\s*[.!?]?\s*$", msg, re.IGNORECASE)
+    if m:
+        from agent.file_tools import make_folder as _mk
+        path = m.group("path").lstrip("/")
+        result = _mk.invoke({"path": path})
+        return {"name": "make_folder", "args": f"path={path}", "result": result}
+
+    return None
+
+
+def _artifact_shortcut(message: str) -> dict | None:
+    """Direct-dispatch artifact intents so they don't depend on the LLM picking the right tool.
+
+    Returns {"name": str, "args": str, "result": str} or None.
+    """
+    msg = message.strip()
+    if not msg or len(msg) > 200:
+        return None
+
+    m = _SAVE_AS_RE.match(msg)
+    if m:
+        from agent.artifacts import save_artifact as _save
+        alias = m.group("alias")
+        result = _save.invoke({"alias": alias, "path": ""})
+        return {"name": "save_artifact", "args": f"alias={alias}", "result": result}
+
+    if _LIST_ARTIFACTS_RE.match(msg):
+        from agent.artifacts import list_artifacts as _list
+        return {"name": "list_artifacts", "args": "", "result": _list.invoke({})}
+
+    m = _RECALL_RE.match(msg)
+    if m:
+        alias = m.group("alias").strip()
+        # Conservative: skip very generic words that would match the regex but
+        # almost never refer to a saved artifact ("show me the time", "give me food").
+        if alias.lower() in {"time", "date", "day", "weather", "news", "screen", "screenshot"}:
+            return None
+        from agent.artifacts import recall_artifact as _recall
+        return {"name": "recall_artifact", "args": f"query={alias}", "result": _recall.invoke({"query": alias})}
+
+    return None
+
+
+def _workspace_primer(max_entries: int = 40) -> str:
+    """Inject WORKSPACE_DIR + a 2-level tree into the system prompt every coder/ultron turn.
+
+    The reason 'doesn't understand folders': without this, the model has no path
+    or file listing in front of it and must call list_files itself — which a 3B
+    model often skips. This is cheap (a few dozen tokens) and grounds every turn.
+    """
+    from config import WORKSPACE_DIR
+    from agent.file_tools import list_workspace_tree
+
+    try:
+        entries = list_workspace_tree(max_depth=2)
+    except Exception:
+        entries = []
+
+    if not entries:
+        listing = "(workspace is empty — write_file paths are relative to this root)"
+    else:
+        lines = []
+        for rel, is_dir in entries[:max_entries]:
+            depth = rel.count("/")
+            indent = "  " * depth
+            lines.append(f"{indent}{'📁 ' if is_dir else '📄 '}{rel}{'/' if is_dir else ''}")
+        if len(entries) > max_entries:
+            lines.append(f"  …(+{len(entries) - max_entries} more — call list_files to see all)")
+        listing = "\n".join(lines)
+
+    return (
+        "\n\n# Workspace context (refreshed every turn)\n"
+        f"Absolute path: {WORKSPACE_DIR}\n"
+        f"All file tools are scoped here — paths are relative to this root.\n"
+        f"Current contents:\n{listing}\n"
+        "Use save_artifact / recall_artifact / list_artifacts to pin and recall files by name."
+    )
+
+
+_AUTOSAVE_EXTS = {
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs",
+    ".go", ".rs", ".java", ".kt", ".cs", ".cpp", ".cc", ".c", ".h", ".hpp",
+    ".rb", ".php", ".swift", ".dart", ".scala", ".sh", ".sql",
+}
+_AUTOSAVE_LANG = {
+    ".py": "python", ".js": "javascript", ".ts": "typescript",
+    ".tsx": "tsx", ".jsx": "jsx", ".mjs": "javascript", ".cjs": "javascript",
+    ".go": "go", ".rs": "rust", ".java": "java", ".kt": "kotlin",
+    ".cs": "csharp", ".cpp": "cpp", ".cc": "cpp", ".c": "c", ".h": "c", ".hpp": "cpp",
+    ".rb": "ruby", ".php": "php", ".swift": "swift", ".dart": "dart",
+    ".scala": "scala", ".sh": "bash", ".sql": "sql",
+}
+
+
+def _autosave_pattern(user_request: str, file_path) -> None:
+    """Save the just-written, just-verified file to the code library so future
+    asks can retrieve it via search_code_library. Best-effort — silent failure."""
+    try:
+        from pathlib import Path
+        from agent.code_library import save_pattern
+        p = Path(file_path)
+        if p.suffix.lower() not in _AUTOSAVE_EXTS:
+            return
+        try:
+            content = p.read_text(encoding="utf-8")
+        except Exception:
+            return
+        # Skip empties and trivial stubs — they pollute the library.
+        if len(content.strip()) < 50:
+            return
+        request = (user_request or "").strip()[:300]
+        if not request:
+            return
+        save_pattern(
+            request=request,
+            code=content[:6000],
+            language=_AUTOSAVE_LANG.get(p.suffix.lower(), "text"),
+            notes="auto-saved",
+            success=True,
+        )
+    except Exception:
+        # Never let pattern saving break the user's turn.
+        pass
 
 
 def _is_chitchat(message: str) -> bool:
@@ -735,16 +1024,26 @@ def _chat_reply(message: str, mode: str = "chat") -> str:
         # answer is phrased naturally instead of a raw fact dump.
 
     inject = "" if _is_chitchat(message) else _full_context(message)
+    chitchat = _is_chitchat(message)
     llm = ChatOllama(
         model=LLM_MODEL,
         temperature=0.5,
-        num_predict=240,
+        num_predict=120 if chitchat else 1500,
         num_ctx=2048 if inject else 1024,
     )
     sys = (
-        "You are Ultron — the user's personal AI on their own laptop. "
-        "Reply directly and conversationally in 1-4 short sentences. "
-        "If RELEVANT MEMORIES or RELEVANT DOCUMENTS are provided below, USE them as ground truth — "
+        "You are Ultron — the user's personal AI on their own laptop.\n"
+        + ("Greetings get one warm sentence. " if chitchat else
+           "DEFAULT VERBOSITY: HIGH — answer like Claude does, not like a one-line chatbot. "
+           "For any substantive question (what is X, how does Y work, explain Z, how do I…) you MUST produce: "
+           "(1) a direct 1-2 sentence answer; "
+           "(2) the mechanism / step-by-step in 3-5 bullets; "
+           "(3) a real WORKING code example in a ``` block whenever the topic touches code — show the whole snippet, never paraphrase it in prose; "
+           "(4) a concrete real-world use case; "
+           "(5) common pitfalls if applicable. "
+           "Aim for 3-5 paragraphs. Being too short is a worse failure than being too long. "
+           "Use code blocks ```python / ```js / ```bash for every snippet. Never write 'and so on' or '// rest unchanged'. ")
+        + "If RELEVANT MEMORIES or RELEVANT DOCUMENTS are provided below, USE them as ground truth — "
         "they are facts the user has saved or uploaded. Cite documents inline as [1], [2] when you draw from them. "
         "Never say 'let me check' or 'I'll look that up' — just answer with what you know. "
         "Do not pretend to call tools. Do not output JSON."
@@ -802,6 +1101,14 @@ def run_agent(message: str, history: list[dict] | None = None, mode: str = "chat
     if fact:
         return _save_explicit_fact(fact)
 
+    fs = _filesystem_shortcut(message)
+    if fs is not None:
+        return fs["result"]
+
+    artifact = _artifact_shortcut(message)
+    if artifact is not None:
+        return artifact["result"]
+
     shortcut = _intent_shortcut(message)
     if shortcut is not None:
         return shortcut["result"]
@@ -813,13 +1120,14 @@ def run_agent(message: str, history: list[dict] | None = None, mode: str = "chat
 
     base_prompt = _prompt_for(mode)
     mem = _full_context(message)
+    primer = _workspace_primer() if mode in ("coder", "ultron") else ""
 
     if mode == "ultron":
         agent, cats, tools = _build_ultron_agent(message)
-        agent = create_react_agent(_llm(), tools=tools, prompt=base_prompt + mem)
+        agent = create_react_agent(_llm(), tools=tools, prompt=base_prompt + primer + mem)
     else:
         tools = CODER_TOOLS if mode == "coder" else CHAT_TOOLS
-        agent = create_react_agent(_llm(), tools=tools, prompt=base_prompt + mem)
+        agent = create_react_agent(_llm(), tools=tools, prompt=base_prompt + primer + mem)
 
     msgs = []
     for m in history or []:
@@ -845,12 +1153,35 @@ def stream_agent(message: str, history: list[dict] | None = None, mode: str = "c
     """Stream events: {'type': 'tool_call'|'tool_result'|'token'|'final', 'data': ...}.
 
     Streamlit uses this to show live tool calls + token-by-token output."""
+    # Reset last-written so the verify hook only acts on files written THIS turn.
+    if mode in ("coder", "ultron"):
+        from agent.artifacts import set_last_written
+        set_last_written(None)
+
     fact = _extract_explicit_fact(message)
     if fact:
         reply = _save_explicit_fact(fact)
         yield {"type": "router", "data": {"categories": ["memory"], "tool_count": 0}}
         yield {"type": "token", "data": reply}
         yield {"type": "final", "data": reply}
+        return
+
+    fs = _filesystem_shortcut(message)
+    if fs is not None:
+        yield {"type": "router", "data": {"categories": ["filesystem"], "tool_count": 1}}
+        yield {"type": "tool_call", "data": {"name": fs["name"], "args": fs["args"]}}
+        yield {"type": "tool_result", "data": {"name": fs["name"], "content": fs["result"][:300]}}
+        yield {"type": "token", "data": fs["result"]}
+        yield {"type": "final", "data": fs["result"]}
+        return
+
+    artifact = _artifact_shortcut(message)
+    if artifact is not None:
+        yield {"type": "router", "data": {"categories": ["artifact"], "tool_count": 1}}
+        yield {"type": "tool_call", "data": {"name": artifact["name"], "args": artifact["args"]}}
+        yield {"type": "tool_result", "data": {"name": artifact["name"], "content": artifact["result"][:300]}}
+        yield {"type": "token", "data": artifact["result"]}
+        yield {"type": "final", "data": artifact["result"]}
         return
 
     shortcut = _intent_shortcut(message)
@@ -871,6 +1202,7 @@ def stream_agent(message: str, history: list[dict] | None = None, mode: str = "c
 
     base_prompt = _prompt_for(mode)
     mem = _full_context(message)
+    primer = _workspace_primer() if mode in ("coder", "ultron") else ""
 
     if mode == "ultron":
         cats = route(message)
@@ -882,7 +1214,7 @@ def stream_agent(message: str, history: list[dict] | None = None, mode: str = "c
     if _confirm_ctx() != "auto":
         tools = _gate_tools(tools)
 
-    agent = create_react_agent(_llm(), tools=tools, prompt=base_prompt + mem)
+    agent = create_react_agent(_llm(), tools=tools, prompt=base_prompt + primer + mem)
 
     msgs = []
     for m in history or []:
@@ -948,7 +1280,101 @@ def stream_agent(message: str, history: list[dict] | None = None, mode: str = "c
         if retry_text:
             final_text = retry_text
 
+    # Auto-verify code that was just written. If syntax / static errors exist,
+    # retry once with the errors injected so the model fixes its own broken
+    # output instead of leaving it for the user to discover.
+    if mode in ("coder", "ultron"):
+        from agent.artifacts import get_last_written
+        from agent.verify import verify_file
+        last = get_last_written()
+        if last is not None and last.exists():
+            errors = verify_file(last)
+            if errors:
+                yield {"type": "tool_result", "data": {
+                    "name": "verify",
+                    "content": f"⚠ {last.name}: {errors[:300]}",
+                }}
+                retry_msg = (
+                    f"The file you just wrote — {last} — has errors:\n\n{errors}\n\n"
+                    f"Read it with read_file, find the cause, and fix it with edit_file. "
+                    f"Do NOT call write_file again (that would overwrite the partial work). "
+                    f"Edit the existing file to fix only the broken parts."
+                )
+                retry_text = ""
+                for ev in _stream_verify_retry(retry_msg, history, mode):
+                    if ev["type"] == "tool_call":
+                        tool_calls_made.append(ev["data"])
+                    if ev["type"] == "token":
+                        retry_text = ev["data"]
+                    yield ev
+                if retry_text:
+                    final_text = retry_text
+                # Re-verify after the fix attempt so the user sees the final state.
+                final_check = verify_file(last)
+                if not final_check:
+                    yield {"type": "tool_result", "data": {
+                        "name": "verify",
+                        "content": f"✓ {last.name} fixed and clean",
+                    }}
+                else:
+                    yield {"type": "tool_result", "data": {
+                        "name": "verify",
+                        "content": f"⚠ {last.name} still has issues after retry: {final_check[:200]}",
+                    }}
+            else:
+                yield {"type": "tool_result", "data": {
+                    "name": "verify",
+                    "content": f"✓ {last.name} syntax check passed",
+                }}
+                # Auto-bank the success: every clean write of a real code file
+                # grows the searchable pattern library by one. The 3B model
+                # forgets to do this manually; making it deterministic means
+                # the bot self-improves on every working build.
+                _autosave_pattern(message, last)
+
     yield {"type": "final", "data": final_text}
+
+
+def _stream_verify_retry(message: str, history, mode: str) -> Iterator[dict]:
+    """One retry pass with verification errors injected. Mirrors stream_agent's
+    main loop but skips the verify hook to avoid recursion."""
+    base_prompt = _prompt_for(mode)
+    mem = _full_context(message)
+    primer = _workspace_primer() if mode in ("coder", "ultron") else ""
+    if mode == "ultron":
+        cats = route(message)
+        tools = tools_for_categories(cats)
+    else:
+        tools = CODER_TOOLS if mode == "coder" else CHAT_TOOLS
+    if _confirm_ctx() != "auto":
+        tools = _gate_tools(tools)
+
+    agent = create_react_agent(_llm(), tools=tools, prompt=base_prompt + primer + mem)
+    msgs = []
+    for m in history or []:
+        msgs.append((m["role"], m["content"]))
+    msgs.append(("user", message))
+
+    try:
+        for event in agent.stream({"messages": msgs}, stream_mode="updates"):
+            for _node, payload in event.items():
+                for msg in payload.get("messages", []):
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            yield {"type": "tool_call", "data": {
+                                "name": tc.get("name", "?"),
+                                "args": str(tc.get("args", ""))[:200],
+                            }}
+                    elif msg.__class__.__name__ == "ToolMessage":
+                        yield {"type": "tool_result", "data": {
+                            "name": getattr(msg, "name", "?"),
+                            "content": str(msg.content)[:300],
+                        }}
+                    elif msg.__class__.__name__ == "AIMessage":
+                        if msg.content:
+                            yield {"type": "token", "data": strip_thinking(msg.content)}
+    except Exception as e:
+        yield {"type": "error", "data": f"verify retry failed: {e}"}
 
 
 def _retry_force_write_file(message: str, history, mode: str) -> Iterator[dict]:
@@ -963,9 +1389,10 @@ def _retry_force_write_file(message: str, history, mode: str) -> Iterator[dict]:
     )
     base_prompt = _prompt_for(mode) + forcing
     mem = _full_context(message)
+    primer = _workspace_primer()
     tools = CODER_TOOLS
 
-    agent = create_react_agent(_llm(), tools=tools, prompt=base_prompt + mem)
+    agent = create_react_agent(_llm(), tools=tools, prompt=base_prompt + primer + mem)
     msgs = []
     for m in history or []:
         msgs.append((m["role"], m["content"]))
