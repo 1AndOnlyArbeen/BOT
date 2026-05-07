@@ -134,7 +134,7 @@ def tools_for_categories(cats: set[str]) -> list:
     from agent.file_tools import FILE_TOOLS
     from agent.document_tools import DOCUMENT_TOOLS
     from agent.dev_tools import DEV_TOOLS
-    from agent.tools import KNOWLEDGE_TOOLS, web_search
+    from agent.tools import KNOWLEDGE_TOOLS, web_search, ARTIFACT_TOOLS
 
     bundle: list = []
     if "system" in cats: bundle += SYSTEM_TOOLS

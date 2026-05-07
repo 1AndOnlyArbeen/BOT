@@ -8,11 +8,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agent.graph import stream_agent
+from agent.graph import stream_agent, _persist_turn
 from agent.planner import make_plan, execute_plan
-from agent.episodic import archive_turn, episodic_context
-from agent.knowledge_graph import learn_from_text, kg_context
-from agent.learning import memory_context, learn_from_turn
 from agent.memory import (
     add_message, delete_session, get_messages,
     list_sessions, new_session, rename_session,
@@ -101,12 +98,7 @@ def stream(req: ChatRequest):
                 if ev["type"] == "plan_done":
                     final = ev["data"]["summary"] or "\n".join(collected)
                     add_message(req.session_id, "assistant", final)
-                    archive_turn(req.session_id, req.message, final)
-                    try:
-                        learn_from_turn(req.message, final)
-                        learn_from_text(req.message + " " + final)
-                    except Exception:
-                        pass
+                    _persist_turn(req.message, final, req.session_id)
                     yield _sse({"type": "final", "data": final})
             return
 
@@ -120,11 +112,6 @@ def stream(req: ChatRequest):
 
         if final and not final.startswith("⚠"):
             add_message(req.session_id, "assistant", final)
-            archive_turn(req.session_id, req.message, final)
-            try:
-                learn_from_turn(req.message, final)
-                learn_from_text(req.message + " " + final)
-            except Exception:
-                pass
+            _persist_turn(req.message, final, req.session_id)
 
     return StreamingResponse(gen(), media_type="text/event-stream")

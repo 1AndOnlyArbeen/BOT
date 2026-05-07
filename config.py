@@ -17,6 +17,7 @@ MEMORY_TOP_K = 5
 MEMORY_AUTO_LEARN = True
 
 VOICE_AUTO_SUBMIT = True
+VOICE_PROFILE = "ultron"  # "default" (Amy) or "ultron" (deep male + FX)
 
 CODE_EXTENSIONS = {
     ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".scss",

@@ -11,14 +11,55 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
+import warnings
 from typing import Iterable, Iterator
+
+# Silence noisy library output before we import anything that triggers it.
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+os.environ.setdefault("CHROMA_TELEMETRY_ENABLED", "False")
+os.environ.setdefault("POSTHOG_DISABLED", "True")
+logging.getLogger("chromadb").setLevel(logging.ERROR)
+logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
+logging.getLogger("posthog").setLevel(logging.CRITICAL)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*LangChain.*")
+
+
+def _silence_chroma_telemetry() -> None:
+    """The bundled chromadb / posthog versions mismatch and spam stderr with
+    'Failed to send telemetry event ... capture() takes 1 positional argument
+    but 3 were given'. Replace the offending function with a no-op."""
+    try:
+        import posthog
+        posthog.capture = lambda *a, **kw: None
+    except Exception:
+        pass
+    try:
+        from chromadb.telemetry.product.posthog import Posthog
+        Posthog.capture = lambda *a, **kw: None
+    except Exception:
+        pass
+    try:
+        import chromadb.telemetry.product as _ctp
+        if hasattr(_ctp, "ProductTelemetryClient"):
+            _ctp.ProductTelemetryClient.capture = lambda *a, **kw: None
+    except Exception:
+        pass
+
+
+_silence_chroma_telemetry()
 
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.live import Live
 from rich.panel import Panel
+from rich.spinner import Spinner
 from rich.text import Text
 
 
@@ -30,6 +71,12 @@ Slash commands (REPL):
   /list                       List recent sessions
   /open <id>                  Resume a session by id
   /sessions                   Alias for /list
+  /voice [keyword|wake|ptt]   Enter voice mode (say 'ultron' to wake, default)
+  /voice-profile [name]       Switch TTS voice (default | ultron | ryan | …)
+  /confirm <on|off|voice>     Toggle permission prompts before risky tools
+  /allow <tool>               Auto-allow this tool for the session
+  /deny <tool>                Always deny this tool
+  /perms                      Show current per-tool overrides
   /clear                      Clear the screen
   /info                       Show current state
   /help                       Show this help
@@ -39,7 +86,7 @@ Slash commands (REPL):
 
 # ───────────────────────────────────── direct mode ─────────────────────────────────────
 def _direct_imports():
-    from agent.graph import stream_agent, run_agent
+    from agent.graph import stream_agent, run_agent, _persist_turn
     from agent.memory import (
         new_session, list_sessions, get_messages, add_message,
         rename_session, get_session_mode,
@@ -47,6 +94,7 @@ def _direct_imports():
     return {
         "stream_agent": stream_agent,
         "run_agent": run_agent,
+        "persist_turn": _persist_turn,
         "new_session": new_session,
         "list_sessions": list_sessions,
         "get_messages": get_messages,
@@ -127,7 +175,8 @@ def remote_get_messages(base_url: str, session_id: int) -> list[dict]:
 
 # ───────────────────────────────────── ui ─────────────────────────────────────
 class CLI:
-    def __init__(self, mode: str, use_planner: bool, remote: str | None, session_id: int | None) -> None:
+    def __init__(self, mode: str, use_planner: bool, remote: str | None, session_id: int | None,
+                 confirm: str = "off") -> None:
         self.console = Console()
         self.mode = mode
         self.use_planner = use_planner
@@ -135,6 +184,12 @@ class CLI:
         self.session_id = session_id
         self.api = None if remote else _direct_imports()
         self._ensure_session()
+        self._set_confirm(confirm)
+
+    def _set_confirm(self, mode: str) -> None:
+        from agent.confirmations import set_context
+        ctx = "auto" if mode == "off" else mode
+        set_context(ctx)
 
     # -- session management --
     def _list_sessions(self) -> list[dict]:
@@ -200,6 +255,7 @@ class CLI:
                 self.api["add_message"](self.session_id, "assistant", final)
             except Exception:
                 pass
+            self.api["persist_turn"](message, final, self.session_id)
 
     def _history_for_direct(self) -> list[dict]:
         if self.remote:
@@ -212,8 +268,17 @@ class CLI:
         final = ""
         live_text = ""
         plan_steps: list[dict] = []
-        with Live("", console=self.console, refresh_per_second=12, vertical_overflow="visible") as live:
+        first_event_seen = False
+        with Live(
+            Spinner("dots", text="thinking…", style="dim"),
+            console=self.console,
+            refresh_per_second=12,
+            vertical_overflow="visible",
+        ) as live:
             for ev in events:
+                if not first_event_seen:
+                    first_event_seen = True
+                    live.update("")
                 t = ev.get("type")
                 d = ev.get("data")
                 if t == "router":
@@ -299,9 +364,112 @@ class CLI:
                 return True
             self.session_id = sid
             self.console.print(f"[green]→ session = {sid}[/green]")
+        elif cmd in ("/voice", "/jarvis"):
+            mode = arg.strip().lower() or "auto"
+            if mode not in ("auto", "keyword", "wake", "ptt"):
+                self.console.print("[red]usage: /voice [keyword|wake|ptt][/red]")
+                return True
+            self._run_voice(mode)
+        elif cmd == "/voice-profile":
+            from voice.tts import (
+                get_active_profile, set_active_profile, list_profiles,
+                install_piper_voice, _profile, speak,
+            )
+            name = arg.strip().lower()
+            if not name:
+                self.console.print(
+                    f"[cyan]active:[/cyan] {get_active_profile()}  "
+                    f"[dim]options:[/dim] {', '.join(list_profiles())}"
+                )
+                return True
+            if not set_active_profile(name):
+                self.console.print(f"[red]unknown profile '{name}'[/red] — try one of {list_profiles()}")
+                return True
+            voice_id = _profile().get("voice", "amy")
+            self.console.print(install_piper_voice(voice_id))
+            self.console.print(f"[green]→ voice profile = {name}[/green] · speaking sample…")
+            speak(f"This is the {name} voice profile.")
+        elif cmd == "/confirm":
+            from agent.confirmations import set_context, get_context
+            v = arg.strip().lower()
+            if v in ("on", "text"):
+                set_context("text")
+            elif v == "voice":
+                set_context("voice")
+            elif v in ("off", "auto"):
+                set_context("auto")
+            else:
+                self.console.print(f"[cyan]confirm = {get_context()}[/cyan]  (on|off|voice)")
+                return True
+            self.console.print(f"[green]→ confirm = {get_context()}[/green]")
+        elif cmd == "/allow":
+            from agent.confirmations import set_mode_for
+            if not arg:
+                self.console.print("[red]usage: /allow <tool_name>[/red]")
+                return True
+            set_mode_for(arg.strip(), "session")
+            self.console.print(f"[green]→ {arg.strip()} auto-allowed for this session[/green]")
+        elif cmd == "/deny":
+            from agent.confirmations import set_mode_for
+            if not arg:
+                self.console.print("[red]usage: /deny <tool_name>[/red]")
+                return True
+            set_mode_for(arg.strip(), "deny")
+            self.console.print(f"[yellow]→ {arg.strip()} will be denied[/yellow]")
+        elif cmd == "/perms":
+            from agent.confirmations import get_approvals, get_context
+            self.console.print(f"[cyan]confirm context:[/cyan] {get_context()}")
+            ap = get_approvals()
+            if not ap:
+                self.console.print("[dim](no per-tool overrides — defaults apply)[/dim]")
+            else:
+                for name, m in sorted(ap.items()):
+                    color = "red" if m == "deny" else "green"
+                    self.console.print(f"  [{color}]{m:8}[/{color}] {name}")
         else:
             self.console.print(f"[red]unknown command: {cmd}[/red] — try /help")
         return True
+
+    def _run_voice(self, prefer: str = "auto") -> None:
+        """Hand off to the voice loop, using `turn()` as the agent entrypoint.
+
+        Captured speech becomes a normal turn, so memory/RAG/sessions stay in sync.
+        Voice mode auto-enables voice-context confirmations so prompts go through
+        TTS+STT instead of the keyboard."""
+        from voice.voice_loop import VoiceLoop, VoiceConfig
+        from agent.confirmations import set_context, get_context
+
+        prev_ctx = get_context()
+        set_context("voice")
+
+        def run_turn_collect(message: str) -> str:
+            """Run one turn and capture the final text (for TTS)."""
+            history = self._history_for_direct()
+            if not self.remote:
+                self.api["add_message"](self.session_id, "user", message)
+                if not self.api["get_messages"](self.session_id)[:-1]:
+                    self.api["rename_session"](self.session_id, _auto_title(message))
+
+            events = (
+                stream_remote(message, self.session_id, self.mode, self.use_planner, self.remote)
+                if self.remote
+                else stream_direct(message, history, self.mode, self.use_planner, self.api)
+            )
+            final = self._render_stream(events)
+
+            if not self.remote and final and not final.startswith("⚠"):
+                try:
+                    self.api["add_message"](self.session_id, "assistant", final)
+                except Exception:
+                    pass
+                self.api["persist_turn"](message, final, self.session_id)
+            return final
+
+        loop = VoiceLoop(run_turn=run_turn_collect, console=self.console, config=VoiceConfig())
+        try:
+            loop.run(prefer=prefer)
+        finally:
+            set_context(prev_ctx)
 
     # -- repl loop --
     def repl(self) -> None:
@@ -345,20 +513,46 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("prompt", nargs="*", help="Prompt to run (omit for interactive REPL)")
-    parser.add_argument("-m", "--mode", choices=["chat", "coder", "ultron"], default="coder",
-                        help="Agent mode (default: coder)")
+    parser.add_argument("-m", "--mode", choices=["chat", "coder", "ultron"], default=None,
+                        help="Agent mode (default: coder for text, ultron for --voice)")
     parser.add_argument("-s", "--session", type=int, help="Resume an existing session by id")
     parser.add_argument("--no-planner", action="store_true", help="Disable plan-then-execute (ultron mode)")
     parser.add_argument("--remote", metavar="URL",
                         help="Talk to a running backend instead of calling the agent in-process")
+    parser.add_argument("--voice", nargs="?", const="auto", default=None,
+                        choices=[None, "auto", "keyword", "wake", "ptt"],
+                        help="Start in always-on voice mode. 'keyword' = listen for 'ultron' (default), "
+                             "'wake' = openwakeword (hey jarvis), 'ptt' = press-Enter-to-talk")
+    parser.add_argument("--confirm", choices=["off", "text", "voice"], default="off",
+                        help="Ask before running risky tools. 'text' = stdin Y/N, 'voice' = TTS+STT, 'off' = never (default)")
+    parser.add_argument("--voice-profile", default=None,
+                        help="TTS voice profile (default, ultron, …). Overrides config.VOICE_PROFILE.")
     args = parser.parse_args(argv)
 
+    if args.voice_profile:
+        from voice.tts import set_active_profile, list_profiles
+        if not set_active_profile(args.voice_profile):
+            print(f"unknown voice profile '{args.voice_profile}'. options: {list_profiles()}")
+            return 2
+
+    # Voice mode: default to ultron + no-planner for the "do anything I say" Jarvis UX.
+    # Planner adds 5–15s per turn which is too slow for spoken interaction.
+    voice_active = args.voice is not None
+    effective_mode = args.mode or ("ultron" if voice_active else "coder")
+    use_planner = (not args.no_planner) and not voice_active
+
     cli = CLI(
-        mode=args.mode,
-        use_planner=not args.no_planner,
+        mode=effective_mode,
+        use_planner=use_planner,
         remote=args.remote.rstrip("/") if args.remote else None,
         session_id=args.session,
+        confirm=args.confirm,
     )
+
+    if args.voice is not None:
+        cli.banner()
+        cli._run_voice(args.voice)
+        return 0
 
     if args.prompt:
         cli.turn(" ".join(args.prompt))

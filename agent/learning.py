@@ -46,26 +46,49 @@ FACTS:"""
 import re as _re
 
 
+# Stops the greedy name/place captures at conjunctions / punctuation / end-of-string.
+_NAME_TAIL = r"(?:(?=\s+(?:and|but|or|who|from|at|in|on))|(?=[.,!?])|\s*$)"
+
 _FAST_FACT_PATTERNS = [
-    (_re.compile(r"\bmy\s+name\s+is\s+([A-Z][\w\- ]{1,40})", _re.IGNORECASE),
-     lambda m: f"User's name is {m.group(1).strip().rstrip('.!?,').title()}"),
-    (_re.compile(r"\bi(?:'?m| am)\s+([A-Z][\w\-]{1,40})\b(?:\s|[.!?,]|$)"),
+    (_re.compile(rf"\bmy\s+name\s+is\s+(\w[\w\-]{{1,30}}(?:\s+\w[\w\-]{{1,30}})?){_NAME_TAIL}", _re.IGNORECASE),
      lambda m: f"User's name is {m.group(1).strip()}"),
-    (_re.compile(r"\bi\s+(?:work|am\s+working)\s+(?:at|for)\s+([A-Z][\w\-\. ]{1,60})", _re.IGNORECASE),
-     lambda m: f"User works at {m.group(1).strip().rstrip('.!?,')}"),
+    (_re.compile(rf"\bi(?:'?m| am)\s+(\w[\w\-]{{1,30}}(?:\s+\w[\w\-]{{1,30}})?){_NAME_TAIL}", _re.IGNORECASE),
+     lambda m: f"User's name is {m.group(1).strip()}"),
+    (_re.compile(r"\bi\s+(?:work|am\s+working)\s+(?:at|for)\s+([\w\-& ]{1,60}?(?:\s+(?:Inc|LLC|Ltd|Corp|Co|GmbH))?\.?)(?:(?=\s+(?:and|but))|(?=[,!?])|(?=\.\s)|(?=\.$)|\s*$)", _re.IGNORECASE),
+     lambda m: f"User works at {m.group(1).strip().rstrip('.')}"),
     (_re.compile(r"\bmy\s+(?:work\s+)?email\s+(?:is\s+)?([\w.\-+]+@[\w.\-]+\.\w+)", _re.IGNORECASE),
      lambda m: f"User's email is {m.group(1).strip()}"),
     (_re.compile(r"\bmy\s+(phone|number)\s+(?:is\s+)?(\+?[\d\-\s()]{7,20})", _re.IGNORECASE),
      lambda m: f"User's phone is {m.group(2).strip()}"),
-    (_re.compile(r"\bi\s+(?:like|love|enjoy|prefer)\s+([\w\- ]{2,60})(?:[.!?,]|$)", _re.IGNORECASE),
-     lambda m: f"User likes {m.group(1).strip().rstrip('.!?,')}"),
-    (_re.compile(r"\bi\s+(?:hate|dislike|don'?t\s+like)\s+([\w\- ]{2,60})(?:[.!?,]|$)", _re.IGNORECASE),
-     lambda m: f"User dislikes {m.group(1).strip().rstrip('.!?,')}"),
-    (_re.compile(r"\bi\s+live\s+in\s+([A-Z][\w\-, ]{2,60})", _re.IGNORECASE),
-     lambda m: f"User lives in {m.group(1).strip().rstrip('.!?,').title()}"),
-    (_re.compile(r"\bi\s+(?:use|run|prefer)\s+(?:linux|ubuntu|fedora|arch|debian|mac(?:os)?|windows)", _re.IGNORECASE),
-     lambda m: f"User's OS: {m.group(0).split()[-1].strip()}"),
+    (_re.compile(r"\bi\s+(?:like|love|enjoy|prefer)\s+([\w\- ]{2,60}?)(?=[.!?,]|$)", _re.IGNORECASE),
+     lambda m: f"User likes {m.group(1).strip()}"),
+    (_re.compile(r"\bi\s+(?:hate|dislike|don'?t\s+like)\s+([\w\- ]{2,60}?)(?=[.!?,]|$)", _re.IGNORECASE),
+     lambda m: f"User dislikes {m.group(1).strip()}"),
+    (_re.compile(r"\bi\s+live\s+in\s+([\w\-, ]{2,60}?)(?=[.!?,]|$)", _re.IGNORECASE),
+     lambda m: f"User lives in {m.group(1).strip()}"),
+    (_re.compile(r"\bi\s+(?:use|run|prefer)\s+(linux|ubuntu|fedora|arch|debian|mac(?:os)?|windows)", _re.IGNORECASE),
+     lambda m: f"User's OS: {m.group(1).strip().lower()}"),
 ]
+
+
+_NAME_BLOCKLIST = {
+    "i", "the", "a", "an", "on", "off", "yes", "no", "ok", "okay",
+    "sure", "fine", "good", "going", "doing", "ready", "here", "there",
+    "happy", "sad", "tired", "bored", "free", "busy", "back", "home",
+    "hi", "hey", "hello", "thanks", "thank",
+}
+
+
+def _clean_name_fact(fact: str) -> str | None:
+    """Filter obvious false positives from name extraction (e.g. 'I'm fine' → 'fine')."""
+    if not fact.lower().startswith("user's name is "):
+        return fact
+    name = fact[len("User's name is "):].strip()
+    if name.lower() in _NAME_BLOCKLIST:
+        return None
+    if not name or not name[0].isalpha():
+        return None
+    return f"User's name is {name}"
 
 
 def _fast_extract(user_msg: str) -> list[str]:
@@ -75,7 +98,10 @@ def _fast_extract(user_msg: str) -> list[str]:
         m = rx.search(user_msg)
         if m:
             try:
-                out.append(fmt(m))
+                fact = fmt(m)
+                cleaned = _clean_name_fact(fact)
+                if cleaned:
+                    out.append(cleaned)
             except Exception:
                 pass
     return out

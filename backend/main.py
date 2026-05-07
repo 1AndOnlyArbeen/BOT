@@ -1,7 +1,31 @@
 """FastAPI backend for Ultron. Mounts all sub-routers and serves the React frontend."""
 from __future__ import annotations
 
+import logging
+import os
+import warnings
 from pathlib import Path
+
+# Silence chroma/posthog telemetry spam before importing anything that triggers it.
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+os.environ.setdefault("CHROMA_TELEMETRY_ENABLED", "False")
+os.environ.setdefault("POSTHOG_DISABLED", "True")
+logging.getLogger("chromadb").setLevel(logging.ERROR)
+logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
+logging.getLogger("posthog").setLevel(logging.CRITICAL)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+try:
+    import posthog
+    posthog.capture = lambda *a, **kw: None
+except Exception:
+    pass
+try:
+    from chromadb.telemetry.product.posthog import Posthog as _ChromaPosthog
+    _ChromaPosthog.capture = lambda *a, **kw: None
+except Exception:
+    pass
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

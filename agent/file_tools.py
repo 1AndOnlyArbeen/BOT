@@ -7,6 +7,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 from agent.backup import snapshot, undo_last, history
+from agent.artifacts import set_last_written
 from config import WORKSPACE_DIR, CODE_EXTENSIONS
 
 
@@ -75,6 +76,7 @@ def write_file(path: str, content: str) -> str:
     if target.exists():
         snapshot(target, op="write")
     target.write_text(content, encoding="utf-8")
+    set_last_written(target)
     return f"✓ wrote {path} ({len(content)} chars)"
 
 
@@ -98,6 +100,7 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
     snapshot(target, op="edit")
     new_text = text.replace(old_string, new_string, 1)
     target.write_text(new_text, encoding="utf-8")
+    set_last_written(target)
     return f"✓ edited {path}"
 
 

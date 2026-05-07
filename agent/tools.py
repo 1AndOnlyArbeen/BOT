@@ -36,6 +36,7 @@ from agent.spreadsheet_tools import SPREADSHEET_TOOLS
 from agent.codebase_tools import CODEBASE_TOOLS
 from agent.shell_tools import SHELL_TOOLS
 from agent.learn_topic import LEARN_TOPIC_TOOLS
+from agent.artifacts import ARTIFACT_TOOLS
 from config import WEB_SEARCH_RESULTS
 
 
@@ -87,6 +88,22 @@ def _run_user_code(code: str, q):
 
 
 @tool
+def list_capabilities() -> str:
+    """List what Ultron can do — tool categories and example commands. Use this when the user asks 'what can you do', 'what are your capabilities', 'help', etc."""
+    return (
+        "Ultron capabilities (in this mode):\n"
+        "• Open/close apps: 'open postman', 'launch firefox', 'close chrome'\n"
+        "• Web/files: read or write files, search the web, fetch URLs, run shell commands\n"
+        "• Code: read, edit, run Python; git commit; search the codebase\n"
+        "• System: screenshot, lock screen, set volume, type text, press keys\n"
+        "• Media: play / pause / next song / previous track\n"
+        "• Memory: 'remember that …' to save facts; 'who am I' / 'what's my X' to recall\n"
+        "• RAG: ask questions about uploaded docs (PDF/MD/TXT/etc — drop in via the RAG view)\n"
+        "Note: exact tools available depend on whether you're in chat / coder / ultron mode."
+    )
+
+
+@tool
 def python_exec(code: str) -> str:
     """Execute Python code in an isolated subprocess (10s timeout)."""
     ctx = mp.get_context("spawn")
@@ -105,7 +122,7 @@ def python_exec(code: str) -> str:
     return "[python_exec] no output"
 
 
-KNOWLEDGE_TOOLS = [rag_search, web_search, calculator, python_exec]
+KNOWLEDGE_TOOLS = [rag_search, web_search, calculator, python_exec, list_capabilities]
 
 from agent.auto_audit import wrap_all
 
@@ -136,12 +153,13 @@ SPREADSHEET_TOOLS = wrap_all(SPREADSHEET_TOOLS, category_hint="spreadsheet")
 CODEBASE_TOOLS = wrap_all(CODEBASE_TOOLS, category_hint="codebase")
 SHELL_TOOLS = wrap_all(SHELL_TOOLS, category_hint="shell")
 LEARN_TOPIC_TOOLS = wrap_all(LEARN_TOPIC_TOOLS, category_hint="learn")
+ARTIFACT_TOOLS = wrap_all(ARTIFACT_TOOLS, category_hint="code")
 
 
 CHAT_TOOLS: list[Any] = [*KNOWLEDGE_TOOLS]
 
 CODER_TOOLS: list[Any] = [
-    *FILE_TOOLS, *GIT_TOOLS, *FILE_SEARCH_TOOLS,
+    *FILE_TOOLS, *ARTIFACT_TOOLS, *GIT_TOOLS, *FILE_SEARCH_TOOLS,
     *CODE_LIBRARY_TOOLS,
     *CODEBASE_TOOLS,
     *SHELL_TOOLS,
@@ -173,6 +191,7 @@ ULTRON_TOOLS: list[Any] = [
     *CODEBASE_TOOLS,
     *SHELL_TOOLS,
     *LEARN_TOPIC_TOOLS,
+    *ARTIFACT_TOOLS,
     *KNOWLEDGE_TOOLS,
 ]
 
