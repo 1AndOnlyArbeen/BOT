@@ -8,11 +8,15 @@ from contextlib import contextmanager
 from config import DB_PATH
 
 
+VALID_MODES = ("ultron", "chat", "coder")
+DEFAULT_MODE = "ultron"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'ultron'
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,28 +41,52 @@ def _conn():
         c.close()
 
 
+def _migrate_add_mode(c: sqlite3.Connection) -> None:
+    cols = [r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()]
+    if "mode" not in cols:
+        c.execute("ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'ultron'")
+
+
 def init_db() -> None:
     with _conn() as c:
         c.executescript(SCHEMA)
+        _migrate_add_mode(c)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_mode ON sessions(mode)")
 
 
-def new_session(title: str = "New chat") -> int:
+def _norm_mode(mode: str | None) -> str:
+    return mode if mode in VALID_MODES else DEFAULT_MODE
+
+
+def new_session(title: str = "New chat", mode: str = DEFAULT_MODE) -> int:
     init_db()
     with _conn() as c:
         cur = c.execute(
-            "INSERT INTO sessions(title, created_at) VALUES (?, ?)",
-            (title, time.time()),
+            "INSERT INTO sessions(title, created_at, mode) VALUES (?, ?, ?)",
+            (title, time.time(), _norm_mode(mode)),
         )
         return cur.lastrowid
 
 
-def list_sessions() -> list[dict]:
+def list_sessions(mode: str | None = None) -> list[dict]:
     init_db()
     with _conn() as c:
-        rows = c.execute(
-            "SELECT id, title, created_at FROM sessions ORDER BY created_at DESC"
-        ).fetchall()
-    return [{"id": r[0], "title": r[1], "created_at": r[2]} for r in rows]
+        if mode is None:
+            rows = c.execute(
+                "SELECT id, title, created_at, mode FROM sessions ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT id, title, created_at, mode FROM sessions WHERE mode = ? ORDER BY created_at DESC",
+                (_norm_mode(mode),),
+            ).fetchall()
+    return [{"id": r[0], "title": r[1], "created_at": r[2], "mode": r[3]} for r in rows]
+
+
+def get_session_mode(session_id: int) -> str | None:
+    with _conn() as c:
+        row = c.execute("SELECT mode FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    return row[0] if row else None
 
 
 def rename_session(session_id: int, title: str) -> None:

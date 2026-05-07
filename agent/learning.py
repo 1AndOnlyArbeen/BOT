@@ -43,29 +43,73 @@ Assistant: {assistant}
 FACTS:"""
 
 
-def extract_facts(user_msg: str, assistant_msg: str) -> list[str]:
-    """Use the LLM to pull durable facts out of a turn."""
+import re as _re
+
+
+_FAST_FACT_PATTERNS = [
+    (_re.compile(r"\bmy\s+name\s+is\s+([A-Z][\w\- ]{1,40})", _re.IGNORECASE),
+     lambda m: f"User's name is {m.group(1).strip().rstrip('.!?,').title()}"),
+    (_re.compile(r"\bi(?:'?m| am)\s+([A-Z][\w\-]{1,40})\b(?:\s|[.!?,]|$)"),
+     lambda m: f"User's name is {m.group(1).strip()}"),
+    (_re.compile(r"\bi\s+(?:work|am\s+working)\s+(?:at|for)\s+([A-Z][\w\-\. ]{1,60})", _re.IGNORECASE),
+     lambda m: f"User works at {m.group(1).strip().rstrip('.!?,')}"),
+    (_re.compile(r"\bmy\s+(?:work\s+)?email\s+(?:is\s+)?([\w.\-+]+@[\w.\-]+\.\w+)", _re.IGNORECASE),
+     lambda m: f"User's email is {m.group(1).strip()}"),
+    (_re.compile(r"\bmy\s+(phone|number)\s+(?:is\s+)?(\+?[\d\-\s()]{7,20})", _re.IGNORECASE),
+     lambda m: f"User's phone is {m.group(2).strip()}"),
+    (_re.compile(r"\bi\s+(?:like|love|enjoy|prefer)\s+([\w\- ]{2,60})(?:[.!?,]|$)", _re.IGNORECASE),
+     lambda m: f"User likes {m.group(1).strip().rstrip('.!?,')}"),
+    (_re.compile(r"\bi\s+(?:hate|dislike|don'?t\s+like)\s+([\w\- ]{2,60})(?:[.!?,]|$)", _re.IGNORECASE),
+     lambda m: f"User dislikes {m.group(1).strip().rstrip('.!?,')}"),
+    (_re.compile(r"\bi\s+live\s+in\s+([A-Z][\w\-, ]{2,60})", _re.IGNORECASE),
+     lambda m: f"User lives in {m.group(1).strip().rstrip('.!?,').title()}"),
+    (_re.compile(r"\bi\s+(?:use|run|prefer)\s+(?:linux|ubuntu|fedora|arch|debian|mac(?:os)?|windows)", _re.IGNORECASE),
+     lambda m: f"User's OS: {m.group(0).split()[-1].strip()}"),
+]
+
+
+def _fast_extract(user_msg: str) -> list[str]:
+    """Cheap regex pass over the user message — catches obvious self-facts the LLM extractor often misses."""
+    out = []
+    for rx, fmt in _FAST_FACT_PATTERNS:
+        m = rx.search(user_msg)
+        if m:
+            try:
+                out.append(fmt(m))
+            except Exception:
+                pass
+    return out
+
+
+def extract_facts(user_msg: str, assistant_msg: str = "") -> list[str]:
+    """Pull durable facts out of a turn — regex fast-path first, then LLM for the rest."""
     if not MEMORY_AUTO_LEARN:
         return []
-    if len(user_msg) < 10:
-        return []
-    try:
-        resp = _extractor().invoke(
-            EXTRACT_PROMPT.format(user=user_msg[:1500], assistant=assistant_msg[:1500])
-        ).content
-    except Exception:
-        return []
+    facts = _fast_extract(user_msg)
 
-    import re
-    cleaned = re.sub(r"<think>.*?</think>", "", resp, flags=re.DOTALL).strip()
-    if "NONE" in cleaned.upper():
-        return []
-    facts = []
-    for line in cleaned.split("\n"):
-        line = line.strip().lstrip("-•*").strip()
-        if line.lower().startswith("user ") and len(line) < 300:
-            facts.append(line)
-    return facts[:5]
+    if len(user_msg) >= 10:
+        try:
+            resp = _extractor().invoke(
+                EXTRACT_PROMPT.format(user=user_msg[:1500], assistant=assistant_msg[:1500])
+            ).content
+            cleaned = _re.sub(r"<think>.*?</think>", "", resp, flags=_re.DOTALL).strip()
+            if "NONE" not in cleaned.upper():
+                for line in cleaned.split("\n"):
+                    line = line.strip().lstrip("-•*").strip()
+                    if line.lower().startswith("user ") and len(line) < 300:
+                        facts.append(line)
+        except Exception:
+            pass
+
+    seen = set()
+    deduped = []
+    for f in facts:
+        key = f.lower().strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(f)
+    return deduped[:8]
 
 
 def _is_duplicate(fact: str, threshold: float = 0.92) -> bool:

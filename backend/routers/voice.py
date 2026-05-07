@@ -24,9 +24,12 @@ async def stt(audio: UploadFile = File(...)) -> dict:
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(await audio.read())
         path = tmp.name
+    size = Path(path).stat().st_size
     try:
         text = transcribe_file(path)
-        return {"text": text}
+        return {"text": text, "bytes": size}
+    except Exception as e:
+        return {"text": "", "bytes": size, "error": str(e)}
     finally:
         Path(path).unlink(missing_ok=True)
 

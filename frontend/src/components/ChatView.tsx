@@ -5,7 +5,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Send, Volume2, VolumeX, Wand2, Zap, Square, RefreshCw, Copy, Check } from "lucide-react";
 import clsx from "clsx";
-import { useStore } from "../store";
+import { useStore, useSessionId } from "../store";
 import { api } from "../api";
 import type { Message, StreamEvent, PlanStep } from "../types";
 import { VoiceRecorder } from "./VoiceRecorder";
@@ -22,7 +22,7 @@ interface ToolCall {
 }
 
 export function ChatView() {
-  const sessionId = useStore((s) => s.sessionId);
+  const sessionId = useSessionId();
   const mode = useStore((s) => s.mode);
   const voiceOut = useStore((s) => s.voiceOut);
   const setVoiceOut = useStore((s) => s.setVoiceOut);
@@ -140,14 +140,23 @@ export function ChatView() {
       setStreamingText("");
       if (voiceOut) api.speak(final).catch(() => {});
     }
-    api.listSessions();
+    api.listSessions(mode);
   };
 
   const handleVoice = async (blob: Blob) => {
     try {
-      const text = await api.stt(blob);
-      if (text) handleSend(text);
-    } catch (e) {
+      const r = await api.stt(blob);
+      if (r.text) {
+        handleSend(r.text);
+      } else if (r.error) {
+        setRouterInfo(`🎙 stt error: ${r.error}`);
+      } else if (r.bytes < 4000) {
+        setRouterInfo("🎙 mic captured almost no audio — check permission / input device");
+      } else {
+        setRouterInfo("🎙 no speech detected — try speaking louder / longer");
+      }
+    } catch (e: any) {
+      setRouterInfo(`🎙 stt failed: ${e.message ?? e}`);
       console.error(e);
     }
   };

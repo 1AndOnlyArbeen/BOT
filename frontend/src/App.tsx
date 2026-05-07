@@ -9,26 +9,28 @@ import { StatsView } from "./components/StatsView";
 import { VaultView } from "./components/VaultView";
 import { CodebaseView } from "./components/CodebaseView";
 import { TrainingView } from "./components/TrainingView";
-import { useStore } from "./store";
+import { RagView } from "./components/RagView";
+import { useStore, useSessionId } from "./store";
 import { api } from "./api";
 
 export default function App() {
   const view = useStore((s) => s.view);
+  const mode = useStore((s) => s.mode);
   const setSessionId = useStore((s) => s.setSessionId);
-  const sessionId = useStore((s) => s.sessionId);
+  const sessionId = useSessionId();
 
   useEffect(() => {
     if (sessionId === null) {
-      api.listSessions().then(async (sessions) => {
+      api.listSessions(mode).then(async (sessions) => {
         if (sessions.length > 0) {
           setSessionId(sessions[0].id);
         } else {
-          const ns = await api.newSession("New chat");
+          const ns = await api.newSession("New chat", mode);
           setSessionId(ns.id);
         }
       });
     }
-  }, [sessionId, setSessionId]);
+  }, [sessionId, mode, setSessionId]);
 
   return (
     <div className="flex h-screen bg-bg text-text">
@@ -43,6 +45,7 @@ export default function App() {
         {view === "vault" && <VaultView />}
         {view === "codebase" && <CodebaseView />}
         {view === "training" && <TrainingView />}
+        {view === "rag" && <RagView />}
       </main>
     </div>
   );

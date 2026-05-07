@@ -17,11 +17,12 @@ async function j<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => j<{ ok: boolean; model: string }>("/health"),
 
-  listSessions: () => j<Session[]>("/chat/sessions"),
-  newSession: (title = "New chat") =>
-    j<{ id: number; title: string }>("/chat/sessions", {
+  listSessions: (mode?: Mode) =>
+    j<Session[]>(mode ? `/chat/sessions?mode=${mode}` : "/chat/sessions"),
+  newSession: (title = "New chat", mode: Mode = "ultron") =>
+    j<{ id: number; title: string; mode: Mode }>("/chat/sessions", {
       method: "POST",
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, mode }),
     }),
   deleteSession: (id: number) =>
     j<{ ok: boolean }>(`/chat/sessions/${id}`, { method: "DELETE" }),
@@ -149,13 +150,12 @@ export const api = {
   speak: (text: string) =>
     j<{ ok: boolean }>("/voice/speak", { method: "POST", body: JSON.stringify({ text }) }),
   installPiper: () => j<{ message: string }>("/voice/install-piper", { method: "POST" }),
-  async stt(blob: Blob): Promise<string> {
+  async stt(blob: Blob): Promise<{ text: string; bytes: number; error?: string }> {
     const fd = new FormData();
     fd.append("audio", blob, "audio.webm");
     const r = await fetch(`${API}/voice/stt`, { method: "POST", body: fd });
     if (!r.ok) throw new Error("stt failed");
-    const j = await r.json();
-    return j.text;
+    return r.json();
   },
 
   vault: () => j<any[]>("/vault/"),
@@ -195,6 +195,26 @@ export const api = {
     }),
   deleteCodebase: (repo: string) =>
     j<{ ok: boolean }>(`/codebase/${encodeURIComponent(repo)}`, { method: "DELETE" }),
+
+  ragSources: () => j<string[]>("/rag/sources"),
+  ragUpload: async (files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    const r = await fetch(`${API}/rag/upload`, { method: "POST", body: fd });
+    if (!r.ok) throw new Error(`upload failed: ${r.status}`);
+    return r.json() as Promise<{ chunks: number; files: string[] }>;
+  },
+  ragText: (text: string, source = "pasted") =>
+    j<{ chunks: number; source: string }>("/rag/text", {
+      method: "POST",
+      body: JSON.stringify({ text, source }),
+    }),
+  ragDeleteSource: (name: string) =>
+    j<{ ok: boolean; deleted: number }>(
+      `/rag/source?name=${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ),
+  ragReset: () => j<{ ok: boolean }>("/rag/sources", { method: "DELETE" }),
 
   seedLibrary: () =>
     j<{ saved: number; topics: Record<string, number> }>("/training/seed", { method: "POST" }),

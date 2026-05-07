@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Ultron CLI launcher — activates the project venv and runs the CLI.
+# Symlink this into ~/.local/bin to put `ultron` on your PATH:
+#   mkdir -p ~/.local/bin && ln -sf "$(pwd)/ultron" ~/.local/bin/ultron
+set -e
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    LINK="$(readlink "$SOURCE")"
+    case "$LINK" in
+        /*) SOURCE="$LINK" ;;
+        *)  SOURCE="$(cd -P "$(dirname "$SOURCE")" && pwd)/$LINK" ;;
+    esac
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+PYTHON="$DIR/.venv/bin/python"
+
+if [ ! -x "$PYTHON" ]; then
+    echo "error: $PYTHON not found. Run ./setup.sh first." >&2
+    exit 1
+fi
+
+cd "$DIR"
+exec "$PYTHON" -m agent.cli "$@"

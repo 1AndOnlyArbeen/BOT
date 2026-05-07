@@ -4,6 +4,7 @@ export interface Session {
   id: number;
   title: string;
   created_at: number;
+  mode?: Mode;
 }
 
 export interface Message {

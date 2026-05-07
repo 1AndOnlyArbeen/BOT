@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   MessageSquare, Brain, Zap, ListChecks, FolderCode,
-  BarChart3, KeyRound, Plus, Trash2, Cpu, Wifi, GitBranch, GraduationCap,
+  BarChart3, KeyRound, Plus, Trash2, Cpu, Wifi, GitBranch, GraduationCap, Database,
 } from "lucide-react";
 import clsx from "clsx";
-import { useStore } from "../store";
+import { useStore, useSessionId } from "../store";
 import { api } from "../api";
 import type { Session, Mode } from "../types";
 import { Pagination, paginate } from "./Pagination";
@@ -14,6 +14,7 @@ const VIEWS = [
   { id: "codebase", icon: GitBranch, label: "Codebase" },
   { id: "training", icon: GraduationCap, label: "Training" },
   { id: "files", icon: FolderCode, label: "Coder" },
+  { id: "rag", icon: Database, label: "RAG" },
   { id: "memory", icon: Brain, label: "Memory" },
   { id: "macros", icon: Zap, label: "Macros" },
   { id: "tasks", icon: ListChecks, label: "Tasks" },
@@ -32,24 +33,28 @@ export function Sidebar() {
   const setView = useStore((s) => s.setView);
   const mode = useStore((s) => s.mode);
   const setMode = useStore((s) => s.setMode);
-  const sessionId = useStore((s) => s.sessionId);
+  const sessionId = useSessionId();
   const setSessionId = useStore((s) => s.setSessionId);
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [model, setModel] = useState<string>("");
   const [sessPage, setSessPage] = useState(1);
 
-  const refresh = () => api.listSessions().then(setSessions);
+  const refresh = () => api.listSessions(mode).then(setSessions);
+
+  useEffect(() => {
+    api.health().then((h) => setModel(h.model));
+  }, []);
 
   useEffect(() => {
     refresh();
-    api.health().then((h) => setModel(h.model));
+    setSessPage(1);
     const id = setInterval(refresh, 3000);
     return () => clearInterval(id);
-  }, []);
+  }, [mode]);
 
   const handleNew = async () => {
-    const s = await api.newSession();
+    const s = await api.newSession("New chat", mode);
     setSessionId(s.id);
     refresh();
     setView("chat");
@@ -59,7 +64,7 @@ export function Sidebar() {
     e.stopPropagation();
     await api.deleteSession(id);
     if (sessionId === id) {
-      const remaining = await api.listSessions();
+      const remaining = await api.listSessions(mode);
       setSessionId(remaining[0]?.id ?? null);
     }
     refresh();

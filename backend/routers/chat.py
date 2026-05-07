@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
 
 class NewSessionBody(BaseModel):
     title: str = "New chat"
+    mode: str = "ultron"
 
 
 class RenameBody(BaseModel):
@@ -38,14 +39,14 @@ class RenameBody(BaseModel):
 
 
 @router.get("/sessions")
-def sessions() -> list[dict]:
-    return list_sessions()
+def sessions(mode: str | None = None) -> list[dict]:
+    return list_sessions(mode=mode)
 
 
 @router.post("/sessions")
 def create_session(body: NewSessionBody) -> dict:
-    sid = new_session(body.title)
-    return {"id": sid, "title": body.title}
+    sid = new_session(body.title, mode=body.mode)
+    return {"id": sid, "title": body.title, "mode": body.mode}
 
 
 @router.delete("/sessions/{session_id}")

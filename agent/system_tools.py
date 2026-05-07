@@ -22,13 +22,47 @@ APP_ALIASES = {
     "chromium": ["chromium"],
     "vscode": ["code"],
     "code": ["code"],
+    "vs code": ["code"],
+    "cursor": ["cursor"],
     "terminal": ["gnome-terminal"],
     "files": ["nautilus"],
+    "file manager": ["nautilus"],
     "calculator": ["gnome-calculator"],
     "spotify": ["spotify"],
     "settings": ["gnome-control-center"],
     "screenshot tool": ["gnome-screenshot", "-i"],
+    "postman": ["postman"],
+    "slack": ["slack"],
+    "discord": ["discord"],
+    "obsidian": ["obsidian"],
+    "notion": ["notion-app"],
+    "telegram": ["telegram-desktop"],
+    "whatsapp": ["whatsapp-for-linux"],
+    "vlc": ["vlc"],
+    "thunderbird": ["thunderbird"],
+    "zoom": ["zoom"],
+    "blender": ["blender"],
+    "gimp": ["gimp"],
+    "inkscape": ["inkscape"],
+    "libreoffice": ["libreoffice"],
 }
+
+
+def _try_alt_launch(name: str) -> str | None:
+    """Try snap / flatpak fallbacks for an app name. Return launch command or None."""
+    candidates = [
+        ["snap", "run", name],
+        ["flatpak", "run", name],
+    ]
+    for cmd in candidates:
+        if _have(cmd[0]):
+            check = subprocess.run(
+                cmd[:2] + ["list"] if cmd[0] == "snap" else ["flatpak", "list"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if name.lower() in check.stdout.lower():
+                return cmd
+    return None
 
 
 def _have(cmd: str) -> bool:
@@ -56,15 +90,25 @@ def _run(args: list[str], detach: bool = True) -> str:
 
 @tool
 def open_app(name: str) -> str:
-    """Open a desktop application by name. Examples: firefox, chrome, vscode, terminal, files, calculator, spotify."""
+    """Open a desktop application by name. Examples: firefox, chrome, vscode, terminal, files, calculator, spotify, postman, slack, discord."""
     name = name.lower().strip()
     args = APP_ALIASES.get(name)
     if not args:
         if _have(name):
             args = [name]
         else:
-            return f"[error] unknown app '{name}'. Known: {', '.join(APP_ALIASES)}"
+            alt = _try_alt_launch(name)
+            if alt:
+                args = alt
+            else:
+                return (
+                    f"[error] '{name}' isn't on PATH and no snap/flatpak match found. "
+                    f"Install it or add an alias. Known: {', '.join(sorted(APP_ALIASES))}"
+                )
     if not _have(args[0]):
+        alt = _try_alt_launch(name)
+        if alt:
+            return _run(alt)
         return f"[error] '{args[0]}' is not installed"
     return _run(args)
 

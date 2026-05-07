@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.routers import (
     chat, files, memory, voice, macros,
-    calendar, stats, system, vault, codebase, training,
+    calendar, stats, system, vault, codebase, training, rag,
 )
 
 
@@ -41,6 +41,7 @@ app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(vault.router, prefix="/api/vault", tags=["vault"])
 app.include_router(codebase.router, prefix="/api/codebase", tags=["codebase"])
 app.include_router(training.router, prefix="/api/training", tags=["training"])
+app.include_router(rag.router, prefix="/api/rag", tags=["rag"])
 
 
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"

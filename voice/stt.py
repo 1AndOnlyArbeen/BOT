@@ -46,9 +46,22 @@ def _model():
     )
 
 
-def transcribe_file(path: str | Path) -> str:
-    segments, _ = _model().transcribe(str(path), beam_size=1, vad_filter=True)
-    return " ".join(s.text.strip() for s in segments).strip()
+def transcribe_file(path: str | Path, language: str | None = "en") -> str:
+    """Transcribe an audio file. VAD off — its defaults clip short utterances on
+    typical laptop mics and was causing silent transcription on 1-3s clips.
+    """
+    segments, info = _model().transcribe(
+        str(path),
+        beam_size=1,
+        vad_filter=False,
+        language=language,
+        condition_on_previous_text=False,
+    )
+    text = " ".join(s.text.strip() for s in segments).strip()
+    if not text:
+        dur = getattr(info, "duration", 0) or 0
+        print(f"[stt] empty transcription for {path} (duration={dur:.2f}s)")
+    return text
 
 
 def transcribe_bytes(audio_bytes: bytes, suffix: str = ".wav") -> str:

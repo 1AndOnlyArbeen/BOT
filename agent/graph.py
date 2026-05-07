@@ -11,14 +11,48 @@ from langgraph.prebuilt import create_react_agent
 from agent.tools import CHAT_TOOLS, CODER_TOOLS, ULTRON_TOOLS
 from agent.learning import memory_context, learn_from_turn, remember, recall
 from agent.router import route, tools_for_categories
-from agent.episodic import episodic_context
-from agent.knowledge_graph import kg_context
+from agent.episodic import episodic_context, archive_turn
+from agent.knowledge_graph import kg_context, learn_from_text
+from rag.retriever import rag_context
 from config import LLM_MODEL, LLM_TEMPERATURE, LLM_NUM_CTX, LLM_NUM_PREDICT
 
 
+def _persist_turn(message: str, reply: str, session_id: int | None = None) -> None:
+    """Run every learning sink for one turn. Best-effort — failures don't break the reply.
+
+    - episodic memory (archive_turn): every turn, raw text searchable later
+    - knowledge graph (learn_from_text): entities/relationships
+    - durable memory (learn_from_turn): "User's X is Y" facts
+    """
+    if not message or not reply:
+        return
+    if session_id is not None:
+        try:
+            archive_turn(session_id, message, reply)
+        except Exception:
+            pass
+    try:
+        learn_from_text(message + " " + reply)
+    except Exception:
+        pass
+    try:
+        learn_from_turn(message, reply)
+    except Exception:
+        pass
+
+
 def _full_context(query: str) -> str:
-    """Combine all memory layers for prompt injection."""
-    return memory_context(query) + episodic_context(query, max_chars=800) + kg_context(query)
+    """Combine all memory layers + RAG corpus for prompt injection.
+
+    RAG is shared across every mode (chat/coder/ultron) so the same uploaded
+    docs / pasted text are visible regardless of which mode is asking.
+    """
+    return (
+        memory_context(query)
+        + episodic_context(query, max_chars=800)
+        + kg_context(query)
+        + rag_context(query)
+    )
 
 
 CHAT_PROMPT = """# Role
@@ -50,42 +84,47 @@ Never output JSON describing a tool call as your final reply. Either you call a 
 
 
 CODER_PROMPT = """# Role
-You are Ultron in coder mode — the user's senior engineer for their own `workspace/` folder. They own everything here. No restrictions, no hand-holding, no "I can't". You write, run, and commit code on their behalf.
+Ultron in coder mode — senior engineer for the user's `workspace/`. The user owns everything here; their command is final. Write, run, and ship code on their behalf.
 
-# Style
-- Confident, terse, honest. Senior-engineer voice.
-- For pure questions ("explain X", "what does Y mean") → answer directly in 2–4 sentences, no tools.
+# Tone & style
+- Terse and direct. Match a senior engineer talking to a peer.
+- No preamble ("Sure!", "I'll go ahead and…", "Let me…"), no trailing summaries of what you just did. The diff and the run output are the answer.
+- For pure questions ("what does X do?", "explain Y") → answer in 2–4 sentences, no tools.
 - For greetings → one warm line, no tools.
-- For coding work → execute the workflow below and show your trace.
-- No apology, no caveats, no "be careful". Just ship it.
+- For coding work → execute, then report what changed in one or two lines.
+- Reference code as `path/to/file.py:42` so the user can jump there.
+- No apologies, no "be careful", no moralizing.
 
-# Workflow (in order, skip steps that don't apply)
-1. **`codebase_search` / `codebase_explain_how_to`** — if a project is indexed, search it FIRST. The user's existing patterns beat your generic answer.
-2. **`search_code_library(request)`** — check the seeded library of 237 known-good patterns (Express, mongoose, FastAPI, Tailwind, Node core, etc.). Reuse beats reinvent.
-3. **`list_files` / `read_file`** — get workspace context before changing anything.
-4. **`search_web_docs(library, topic)`** — official docs when an API is unfamiliar or version-specific.
-5. **`web_search(query)`** — examples and Stack Overflow patterns when nothing local matches.
-6. **`write_file` / `edit_file`** — produce the code. Edit minimally; match existing style; no decorative comments.
-7. **`run_python_file` / `python_exec` / `shell_exec`** — verify it works. If it errors, READ the error, fix the bug, re-run. Don't surrender after one failure.
-8. **`save_code_pattern(request, code, language)`** — bank the win so future requests get faster.
-9. **`git_add` + `git_commit`** — single-purpose commit, imperative subject ("add JWT middleware"), no body needed for small changes.
+# Workflow
+Default loop: **explore → plan → execute → verify**.
+
+1. **Explore before editing.** Run `codebase_search` / `codebase_explain_how_to` first if a project is indexed — existing patterns beat generic answers. Then `list_files` / `read_file` to get the lay of the land. Never edit a file you haven't read.
+2. **Reuse before reinvent.** Check `search_code_library(request)` for known-good patterns. Match existing conventions over introducing new ones.
+3. **Look up unknowns.** `search_web_docs(lib, topic)` for unfamiliar/version-specific APIs. `web_search` only when local context fails.
+4. **Edit minimally.** Use `edit_file` for surgical changes; `write_file` only for new files. Change one thing at a time. Don't refactor code adjacent to the fix unless asked.
+5. **Verify.** Run the code with `python_exec` / `run_python_file` / `shell_exec`. If it errors, read the error, fix the bug, re-run. Don't surrender after one failure.
+6. **Bank wins.** `save_code_pattern(request, code, language)` after a non-trivial success.
+7. **Commit.** `git_add` + `git_commit` only when the user asks. Single-purpose commit, imperative subject ("add JWT middleware").
+
+When work is independent, batch tool calls — read multiple files at once instead of one-by-one.
 
 # Code quality bar
-- Match the file's existing style (tabs vs spaces, quote style, naming).
-- No comments unless they explain WHY something non-obvious is done. Don't narrate WHAT the code does.
-- No backwards-compat shims for code you just wrote.
-- No error handling for cases that can't happen. Validate at boundaries (user input, external APIs), not internally.
-- Prefer editing one file over splitting into many.
-- If the user asks for a small fix, do the small fix — don't refactor surrounding code.
+- **Match existing style.** Tabs vs spaces, quote style, naming, import order. Read a sibling file first if unsure.
+- **No decorative comments.** Comments only when WHY is non-obvious (a hidden constraint, a workaround for a specific bug, a subtle invariant). Never narrate WHAT the code does — names already do that. No "added for X" or "TODO: refactor".
+- **Don't add features the user didn't ask for.** No surrounding cleanup. No premature abstractions for hypothetical reuse. Three similar lines is fine.
+- **Don't add error handling for impossible cases.** Trust internal code and framework guarantees. Validate only at boundaries (user input, external APIs). Don't try/except a function call when the function can't fail.
+- **No backwards-compat shims** for code you just wrote — change call sites instead.
+- **Edit existing files** over creating new ones. Don't introduce new files unless the task genuinely requires it.
+- **Don't leave half-finished code** behind. Either ship it or remove it.
 
-# Verification
-Before you say "done", you must have either: (a) successfully run the code, or (b) explicitly told the user you couldn't run it and why. Compile-checks alone are not enough.
+# Verification gate
+Before saying "done": either (a) you ran the code and it worked, or (b) you explicitly stated what you couldn't run and why. Type-checks alone are not enough.
 
-# Output format
-Show: files touched, key changes, run output (or test output). Then one line summary. Skip preamble.
+# Safety
+Local file edits and runs are free to do. But for destructive or wide-blast operations — `rm -rf`, `git reset --hard`, force-push, dropping tables, deleting branches — confirm with the user first. Never use `--no-verify` to skip hooks unless the user explicitly says so. If a hook fails, fix the underlying issue.
 
 # Output rule
-Never output JSON pretending to be a tool call. Either call a tool (the framework handles it) or write code. Never both."""
+Never output JSON pretending to be a tool call (`{"name": ..., "parameters": ...}`). Either you call a tool (the framework handles that) or you reply in plain prose / code. Never both."""
 
 
 ULTRON_PROMPT = """# Role
@@ -168,6 +207,134 @@ _REMEMBER_RE = re.compile(
 )
 
 
+_OPEN_RE = re.compile(
+    r"^\s*(please\s+)?(can\s+you\s+)?(open|launch|start|run|fire\s+up|bring\s+up)\s+(?:the\s+|app\s+)?(?P<name>[a-zA-Z][\w\-\. ]{0,40}?)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_CLOSE_RE = re.compile(
+    r"^\s*(please\s+)?(close|kill|quit|exit)\s+(?:the\s+)?(?P<name>[a-zA-Z][\w\-\. ]{0,40}?)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_SCREENSHOT_RE = re.compile(
+    r"^\s*(take\s+(a\s+)?)?screen\s*shot\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_LOCK_RE = re.compile(
+    r"^\s*lock(\s+(the\s+)?screen)?\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_OPEN_URL_RE = re.compile(
+    r"^\s*(open|go\s+to|navigate\s+to|browse\s+to|visit)\s+(?P<url>https?://\S+|(?:www\.|[\w\-]+\.)\S+)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+_NON_APP_WORDS = {
+    "file", "files", "folder", "directory", "tab", "window", "door",
+    "issue", "ticket", "pr", "pull", "request", "bug", "branch",
+    "session", "chat", "conversation",
+}
+
+
+def _intent_shortcut(message: str) -> dict | None:
+    """Detect deterministic action commands so we don't depend on the LLM choosing a tool.
+
+    Small models (3B) routinely fail to emit tool_calls and instead narrate or leak
+    JSON. For high-confidence single-action requests, just run the tool directly.
+
+    Returns {"name": str, "args": str, "result": str} or None.
+    """
+    msg = message.strip()
+    if not msg or len(msg) > 80:
+        return None
+
+    if _SCREENSHOT_RE.match(msg):
+        from agent.system_tools import screenshot
+        return {"name": "screenshot", "args": "", "result": screenshot.invoke({})}
+
+    if _LOCK_RE.match(msg):
+        from agent.system_tools import lock_screen
+        return {"name": "lock_screen", "args": "", "result": lock_screen.invoke({})}
+
+    m = _OPEN_URL_RE.match(msg)
+    if m:
+        from agent.system_tools import open_url
+        url = m.group("url")
+        return {"name": "open_url", "args": url, "result": open_url.invoke({"url": url})}
+
+    m = _OPEN_RE.match(msg)
+    if m:
+        name = m.group("name").strip().lower()
+        if name and name not in _NON_APP_WORDS and not any(c in name for c in "/\\"):
+            from agent.system_tools import open_app, APP_ALIASES
+            if " " in name and name not in APP_ALIASES:
+                return None  # multi-word phrase like "the file menu" → not an app
+            return {"name": "open_app", "args": name, "result": open_app.invoke({"name": name})}
+
+    m = _CLOSE_RE.match(msg)
+    if m:
+        name = m.group("name").strip().lower()
+        if name and name not in _NON_APP_WORDS:
+            from agent.process_tools import kill_process
+            try:
+                return {"name": "kill_process", "args": name, "result": kill_process.invoke({"pid_or_name": name})}
+            except Exception:
+                return None
+
+    return None
+
+
+_FAKE_TOOL_CALL_RE = re.compile(
+    r'^\s*[`\s]*(?:```(?:json)?\s*)?\{\s*"(?:name|function|tool|action)"\s*:\s*"[^"]+"\s*,\s*"(?:parameters|arguments|args|input)"\s*:',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _looks_like_fake_tool_call(text: str) -> bool:
+    """The model emitted a JSON tool-call schema as its final answer (a known small-model failure)."""
+    return bool(_FAKE_TOOL_CALL_RE.match(text or ""))
+
+
+def _strip_fake_tool_call(text: str) -> str:
+    """Return text with leading fake tool-call JSON removed."""
+    s = (text or "").strip().lstrip("`")
+    s = re.sub(r"^```(?:json)?\s*", "", s)
+    if not s.startswith("{"):
+        return text or ""
+    depth = 0
+    end = -1
+    for i, ch in enumerate(s):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end < 0:
+        return ""
+    rest = s[end:].lstrip("` \n")
+    return rest
+
+
+def _retry_plain_reply(message: str) -> str:
+    """When the model leaks JSON, ask once more with strict no-JSON system instructions."""
+    llm = ChatOllama(
+        model=LLM_MODEL, temperature=0.4, num_predict=300, num_ctx=1024,
+    )
+    sys = (
+        "You are Ultron — a friendly personal AI. Answer the user's question directly in plain prose. "
+        "NEVER output JSON. NEVER write {\"name\": ...} or {\"function\": ...}. "
+        "Do NOT pretend to call tools. Just answer in 1-4 sentences."
+    )
+    try:
+        out = llm.invoke([("system", sys), ("user", message)]).content
+        out = strip_thinking(out).strip()
+        if _looks_like_fake_tool_call(out):
+            return "(I had trouble answering that — try rephrasing.)"
+        return out
+    except Exception:
+        return "(model error — try again)"
+
+
 def _extract_explicit_fact(message: str) -> str | None:
     """Detect explicit teach-me commands and pull out the fact to save.
 
@@ -227,15 +394,27 @@ def _is_chat_only(message: str) -> bool:
 
 
 def _chat_reply(message: str, mode: str = "chat") -> str:
-    """Direct LLM call with no tools, no memory injection — friendly conversational reply."""
+    """Direct LLM call with no tools — friendly conversational reply.
+
+    Greetings skip context entirely (cheap & fast). Anything else gets full
+    memory/RAG context so the model can answer "who is arbin" / "what's my
+    email" / "what's in my notes" without needing the heavy agent path.
+    """
+    inject = "" if _is_chitchat(message) else _full_context(message)
     llm = ChatOllama(
-        model=LLM_MODEL, temperature=0.6, num_predict=180, num_ctx=1024,
+        model=LLM_MODEL,
+        temperature=0.5,
+        num_predict=240,
+        num_ctx=2048 if inject else 1024,
     )
     sys = (
-        "You are Ultron — the user's friendly personal AI on their own laptop. "
-        "Reply directly and conversationally in 1-3 short sentences. "
-        "Do not mention tools, memory, search, or capabilities. "
-        "Do not pretend to call or run anything. Just answer naturally."
+        "You are Ultron — the user's personal AI on their own laptop. "
+        "Reply directly and conversationally in 1-4 short sentences. "
+        "If RELEVANT MEMORIES or RELEVANT DOCUMENTS are provided below, USE them as ground truth — "
+        "they are facts the user has saved or uploaded. Cite documents inline as [1], [2] when you draw from them. "
+        "Never say 'let me check' or 'I'll look that up' — just answer with what you know. "
+        "Do not pretend to call tools. Do not output JSON."
+        + inject
     )
     try:
         out = llm.invoke([("system", sys), ("user", message)]).content
@@ -289,12 +468,13 @@ def run_agent(message: str, history: list[dict] | None = None, mode: str = "chat
     if fact:
         return _save_explicit_fact(fact)
 
+    shortcut = _intent_shortcut(message)
+    if shortcut is not None:
+        return shortcut["result"]
+
     if _is_chat_only(message):
         reply = _chat_reply(message, mode=mode)
-        try:
-            learn_from_turn(message, reply)
-        except Exception:
-            pass
+        _persist_turn(message, reply)
         return reply
 
     base_prompt = _prompt_for(mode)
@@ -315,6 +495,10 @@ def run_agent(message: str, history: list[dict] | None = None, mode: str = "chat
     result = agent.invoke({"messages": msgs})
     final = strip_thinking(result["messages"][-1].content)
 
+    if _looks_like_fake_tool_call(final):
+        cleaned = _strip_fake_tool_call(final).strip()
+        final = cleaned if cleaned else _retry_plain_reply(message)
+
     try:
         learn_from_turn(message, final)
     except Exception:
@@ -334,15 +518,21 @@ def stream_agent(message: str, history: list[dict] | None = None, mode: str = "c
         yield {"type": "final", "data": reply}
         return
 
+    shortcut = _intent_shortcut(message)
+    if shortcut is not None:
+        yield {"type": "router", "data": {"categories": ["shortcut"], "tool_count": 1}}
+        yield {"type": "tool_call", "data": {"name": shortcut["name"], "args": shortcut["args"]}}
+        yield {"type": "tool_result", "data": {"name": shortcut["name"], "content": shortcut["result"]}}
+        yield {"type": "token", "data": shortcut["result"]}
+        yield {"type": "final", "data": shortcut["result"]}
+        return
+
     if _is_chat_only(message):
         reply = _chat_reply(message, mode=mode)
         yield {"type": "router", "data": {"categories": ["chat"], "tool_count": 0}}
         yield {"type": "token", "data": reply}
         yield {"type": "final", "data": reply}
-        try:
-            learn_from_turn(message, reply)
-        except Exception:
-            pass
+        _persist_turn(message, reply)
         return
 
     base_prompt = _prompt_for(mode)
@@ -385,6 +575,14 @@ def stream_agent(message: str, history: list[dict] | None = None, mode: str = "c
     except Exception as e:
         yield {"type": "error", "data": str(e)}
         return
+
+    if _looks_like_fake_tool_call(final_text):
+        cleaned = _strip_fake_tool_call(final_text).strip()
+        if cleaned:
+            final_text = cleaned
+        else:
+            final_text = _retry_plain_reply(message)
+        yield {"type": "token", "data": final_text}
 
     yield {"type": "final", "data": final_text}
 
