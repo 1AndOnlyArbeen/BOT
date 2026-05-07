@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { KeyRound, Plus, Trash2, Eye, EyeOff } from "lucide-react";
 import { api } from "../api";
+import { Pagination, paginate } from "./Pagination";
 
 export function VaultView() {
   const [creds, setCreds] = useState<any[]>([]);
@@ -9,6 +10,7 @@ export function VaultView() {
   const [value, setValue] = useState("");
   const [kind, setKind] = useState("api_key");
   const [revealValue, setRevealValue] = useState(false);
+  const [page, setPage] = useState(1);
 
   const refresh = () => api.vault().then(setCreds);
   useEffect(() => { refresh(); }, []);
@@ -86,7 +88,7 @@ export function VaultView() {
           )}
 
           <div className="space-y-2">
-            {creds.map((c) => (
+            {paginate(creds, page).map((c) => (
               <div key={c.name} className="flex items-center justify-between bg-panel2 border border-border rounded-md p-3">
                 <div>
                   <div className="font-mono text-sm">{c.name}</div>
@@ -102,6 +104,7 @@ export function VaultView() {
             ))}
             {creds.length === 0 && <div className="text-muted text-sm">No credentials stored.</div>}
           </div>
+          <Pagination page={page} total={creds.length} onChange={setPage} />
         </div>
       </div>
     </div>

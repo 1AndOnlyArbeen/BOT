@@ -3,15 +3,17 @@ import { ListChecks, Check, Trash2, Plus } from "lucide-react";
 import clsx from "clsx";
 import { api } from "../api";
 import type { Task } from "../types";
+import { Pagination, paginate } from "./Pagination";
 
 export function TasksView() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [filter, setFilter] = useState<"open" | "done" | "all">("open");
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
+  const [page, setPage] = useState(1);
 
   const refresh = () => api.tasks(filter).then(setTasks);
-  useEffect(() => { refresh(); }, [filter]);
+  useEffect(() => { refresh(); setPage(1); }, [filter]);
 
   const handleAdd = async () => {
     if (!title.trim()) return;
@@ -69,7 +71,7 @@ export function TasksView() {
           </div>
 
           <div className="space-y-2">
-            {tasks.map((t) => (
+            {paginate(tasks, page).map((t) => (
               <div key={t.id} className="group flex items-center gap-3 bg-panel2 border border-border rounded-md p-3">
                 <button
                   onClick={async () => { await api.patchTask(t.id, t.status === "open" ? "done" : "open"); refresh(); }}
@@ -100,6 +102,7 @@ export function TasksView() {
             ))}
             {tasks.length === 0 && <div className="text-muted text-sm text-center py-8">No {filter} tasks.</div>}
           </div>
+          <Pagination page={page} total={tasks.length} onChange={setPage} />
         </div>
       </div>
     </div>

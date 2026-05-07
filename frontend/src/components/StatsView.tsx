@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { api } from "../api";
+import { Pagination, paginate } from "./Pagination";
 
 export function StatsView() {
   const [overview, setOverview] = useState<any>(null);
   const [audit, setAudit] = useState<any[]>([]);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     api.stats().then(setOverview);
-    api.audit(50).then(setAudit);
+    api.audit(200).then(setAudit);
   }, []);
 
   if (!overview) return <div className="p-6 text-muted">Loading…</div>;
@@ -49,9 +51,11 @@ export function StatsView() {
             </div>
           </div>
 
-          <h3 className="text-sm uppercase tracking-wider text-muted mb-3">Recent activity</h3>
-          <div className="space-y-1 font-mono text-xs max-h-96 overflow-y-auto">
-            {audit.map((a) => (
+          <h3 className="text-sm uppercase tracking-wider text-muted mb-3">
+            Recent activity ({audit.length})
+          </h3>
+          <div className="space-y-1 font-mono text-xs">
+            {paginate(audit, page).map((a) => (
               <div key={a.id} className="bg-panel2 px-3 py-1.5 rounded flex justify-between">
                 <span className="text-accent2">{a.tool}</span>
                 <span className="text-muted">
@@ -60,6 +64,7 @@ export function StatsView() {
               </div>
             ))}
           </div>
+          <Pagination page={page} total={audit.length} onChange={setPage} />
         </div>
       </div>
     </div>

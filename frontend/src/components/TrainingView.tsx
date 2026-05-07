@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { GraduationCap, Sparkles, Loader2, BookOpen, Trash2 } from "lucide-react";
+import { GraduationCap, Sparkles, Loader2, BookOpen } from "lucide-react";
 import { api } from "../api";
+import { Pagination, paginate } from "./Pagination";
 
 interface Entry { request: string; language: string; ts: number; }
 
@@ -11,6 +12,9 @@ export function TrainingView() {
   const [docUrl, setDocUrl] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [page, setPage] = useState(1);
+
+  useEffect(() => { setPage(1); }, [filter, entries.length]);
 
   const refresh = () => api.libraryEntries().then(setEntries);
   useEffect(() => { refresh(); }, []);
@@ -125,7 +129,7 @@ export function TrainingView() {
               />
             </div>
             <div className="space-y-1.5">
-              {filtered.slice(0, 100).map((e, i) => (
+              {paginate(filtered, page).map((e, i) => (
                 <div key={i} className="bg-panel2 border border-border rounded-md px-3 py-2 flex items-center justify-between text-sm">
                   <div className="flex-1 min-w-0">
                     <div className="truncate">{e.request}</div>
@@ -141,6 +145,7 @@ export function TrainingView() {
                 </div>
               )}
             </div>
+            <Pagination page={page} total={filtered.length} onChange={setPage} />
           </section>
         </div>
       </div>

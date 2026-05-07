@@ -7,6 +7,7 @@ import clsx from "clsx";
 import { useStore } from "../store";
 import { api } from "../api";
 import type { Session, Mode } from "../types";
+import { Pagination, paginate } from "./Pagination";
 
 const VIEWS = [
   { id: "chat", icon: MessageSquare, label: "Chat" },
@@ -36,6 +37,7 @@ export function Sidebar() {
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [model, setModel] = useState<string>("");
+  const [sessPage, setSessPage] = useState(1);
 
   const refresh = () => api.listSessions().then(setSessions);
 
@@ -131,9 +133,9 @@ export function Sidebar() {
 
           <div className="flex-1 overflow-y-auto px-2 mt-3">
             <div className="text-[10px] uppercase tracking-wider text-muted mb-1 px-2 font-semibold">
-              Recent
+              Recent ({sessions.length})
             </div>
-            {sessions.map((s) => (
+            {paginate(sessions, sessPage).map((s) => (
               <button
                 key={s.id}
                 onClick={() => {
@@ -156,6 +158,9 @@ export function Sidebar() {
                 </span>
               </button>
             ))}
+            <div className="px-2">
+              <Pagination page={sessPage} total={sessions.length} onChange={setSessPage} />
+            </div>
           </div>
         </>
       )}

@@ -3,6 +3,7 @@ import { Zap, Play, Trash2, Plus } from "lucide-react";
 import { api } from "../api";
 import { useStore } from "../store";
 import type { Macro } from "../types";
+import { Pagination, paginate } from "./Pagination";
 
 export function MacrosView() {
   const setView = useStore((s) => s.setView);
@@ -11,6 +12,7 @@ export function MacrosView() {
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [description, setDescription] = useState("");
+  const [page, setPage] = useState(1);
 
   const refresh = () => api.listMacros().then(setMacros);
   useEffect(() => { refresh(); }, []);
@@ -89,7 +91,7 @@ export function MacrosView() {
           )}
 
           <div className="grid gap-3">
-            {macros.map((m) => (
+            {paginate(macros, page).map((m) => (
               <div key={m.name} className="bg-panel2 border border-border rounded-md p-4 group">
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
@@ -117,6 +119,7 @@ export function MacrosView() {
               </div>
             ))}
           </div>
+          <Pagination page={page} total={macros.length} onChange={setPage} />
         </div>
       </div>
     </div>
