@@ -72,6 +72,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text }),
     }),
+  addFactBulk: (text: string, label = "") =>
+    j<{ saved: number; chunks: number }>("/memory/facts/text", {
+      method: "POST",
+      body: JSON.stringify({ text, label }),
+    }),
+  uploadFactFile: async (file: File, label = "") => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (label) fd.append("label", label);
+    const r = await fetch(`${API}/memory/facts/upload`, { method: "POST", body: fd });
+    if (!r.ok) throw new Error(`upload failed: ${r.status}`);
+    return r.json() as Promise<{ saved: number; chunks: number; filename: string }>;
+  },
   deleteFact: (text: string) =>
     j<{ ok: boolean }>(`/memory/facts?text=${encodeURIComponent(text)}`, {
       method: "DELETE",
