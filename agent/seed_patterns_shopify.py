@@ -538,7 +538,7 @@ export function verifyShopifyWebhook(rawBody: string, hmacHeader: string, secret
     "language": "graphql", "framework": "shopify-admin",
     "code": """# 1. Start bulk operation — runs in background, results streamed to a JSONL file URL
 mutation {
-  bulkOperationRunQuery(query: """
+  bulkOperationRunQuery(query: \"\"\"
     {
       products {
         edges {
@@ -549,7 +549,7 @@ mutation {
         }
       }
     }
-  """) {
+  \"\"\") {
     bulkOperation { id status }
     userErrors { field message }
   }
