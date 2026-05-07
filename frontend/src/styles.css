@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  font-family: "Inter", system-ui, sans-serif;
+  background: #0b0d12;
+  color: #e8eaf0;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #262b38; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3f4d; }
+
+.brand-text {
+  background: linear-gradient(90deg, #ff3b3b, #00d4ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.glow {
+  box-shadow: 0 0 20px rgba(255, 59, 59, 0.4);
+}
+
+.message-bubble-user {
+  background: linear-gradient(135deg, #1f2330, #181c25);
+  border: 1px solid #262b38;
+}
+
+.tool-pill {
+  background: #181c25;
+  border: 1px solid #262b38;
+  color: #00d4ff;
+  font-family: "JetBrains Mono", monospace;
+}
+
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+.typing-dot {
+  animation: typing-dot 1.4s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+pre code {
+  font-family: "JetBrains Mono", monospace !important;
+}

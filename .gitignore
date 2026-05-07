@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+data/chroma/
+data/chat.db
+data/documents/*
+!data/documents/.gitkeep
+data/whisper_models/
+.streamlit/
+.DS_Store

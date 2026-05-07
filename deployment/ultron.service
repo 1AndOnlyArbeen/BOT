@@ -1,0 +1,15 @@
+[Unit]
+Description=Ultron — local AI assistant
+After=network.target ollama.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Arbeen/Development /bot
+Environment="DISPLAY=:0"
+Environment="XDG_RUNTIME_DIR=/run/user/%U"
+ExecStart=%h/Arbeen/Development /bot/.venv/bin/streamlit run %h/Arbeen/Development /bot/app.py --server.headless true --server.port 8501
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
