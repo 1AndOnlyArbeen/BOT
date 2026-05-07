@@ -180,6 +180,8 @@ def _extract_explicit_fact(message: str) -> str | None:
     if not m:
         return None
     fact = m.group("fact").strip().strip('"\'').rstrip(".!?")
+    fact = re.sub(r"^(that\s+|the\s+fact\s+that\s+)", "", fact, flags=re.IGNORECASE)
+    fact = fact.strip()
     if len(fact) < 3 or len(fact) > 280:
         return None
     return fact

@@ -9,10 +9,12 @@ from agent.seed_patterns import SEED
 from agent.seed_patterns_nodejs import NODEJS_SEED
 from agent.seed_patterns_web import WEB_SEED
 from agent.seed_patterns_backend_deep import BACKEND_DEEP_SEED
+from agent.seed_patterns_remix import REMIX_SEED
+from agent.seed_patterns_shopify import SHOPIFY_SEED
 from agent.code_library import save_pattern
 
 
-ALL_PATTERNS = SEED + NODEJS_SEED + WEB_SEED + BACKEND_DEEP_SEED
+ALL_PATTERNS = SEED + NODEJS_SEED + WEB_SEED + BACKEND_DEEP_SEED + REMIX_SEED + SHOPIFY_SEED
 
 
 def run() -> dict:
