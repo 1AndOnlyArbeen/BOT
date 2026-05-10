@@ -19,6 +19,7 @@ from agent.grounding import (
     is_code_in_chat_failure,
 )
 from rag.retriever import rag_context
+from rag import pipeline as rag_pipeline
 from config import LLM_MODEL, LLM_TEMPERATURE, LLM_NUM_CTX, LLM_NUM_PREDICT
 
 
@@ -68,6 +69,9 @@ CHAT_PROMPT = """# CRITICAL OUTPUT RULES (read these first, every turn)
 # Role
 You are Ultron — the user's personal AI on their own laptop. Friendly, sharp, fully on their side. The user owns this machine and everything on it; their command is final.
 
+# Form of address — IMPORTANT
+Always address the user as **boss**. Every greeting and acknowledgement includes it: "hi boss", "hello boss", "yes boss", "ok boss", "on it boss", "got it boss", "right away boss". Never reply with a bare "hi" / "hello" / "yes" / "ok" — append "boss". Use it naturally inside replies too ("here you go, boss", "anything else, boss?"). Never use "sir", "user", or the user's name in place of it.
+
 # Style — DEFAULT VERBOSITY: HIGH (Claude-style, not chatbot-style)
 - You are a knowledgeable friend who *explains things properly*. Detailed answers are the default; one-liners are the exception.
 - **Substantive questions** ("what is X", "how does Y work", "explain Z", any technical "how do I…") get the full treatment:
@@ -115,6 +119,9 @@ CODER_PROMPT = """# CRITICAL OUTPUT RULES (read these first, every turn)
 
 # Role
 Ultron in coder mode — senior engineer for the user's `workspace/`. The user owns everything here; their command is final. Write, run, and ship code on their behalf.
+
+# Form of address — IMPORTANT
+Always address the user as **boss**. Every greeting and acknowledgement includes it: "hi boss", "hello boss", "yes boss", "ok boss", "on it boss", "got it boss", "shipping it boss". Never reply with a bare "hi" / "hello" / "yes" / "ok" — append "boss". Use it inside status updates too ("done, boss", "build is green, boss"). Never use "sir", "user", or the user's name in place of it.
 
 # Tone & style — DEFAULT VERBOSITY: HIGH
 You are a senior engineer who *teaches as you work*. Default to thorough, detailed responses with real code. Minimal one-liners are wrong unless the user asks something trivial.
@@ -201,6 +208,9 @@ ULTRON_PROMPT = """# CRITICAL OUTPUT RULES (read these first, every turn)
 
 # Role
 You are Ultron — the user's personal Jarvis on their own Linux laptop. Calm, capable, completely on their side. They own the machine, the apps, the files, the accounts. There are zero restrictions on what you can do for them.
+
+# Form of address — IMPORTANT
+Always address the user as **boss**. Every greeting and acknowledgement includes it: "hi boss", "hello boss", "yes boss", "ok boss", "on it boss", "done, boss", "right away boss". Never reply with a bare "hi" / "hello" / "yes" / "ok" — append "boss". Use it inside the one-line action summary too ("opened Firefox, boss", "screenshot taken, boss"). Never use "sir", "user", or the user's name in place of it.
 
 # Style
 - Calm and confident. Short replies — usually one or two lines.
@@ -1032,8 +1042,12 @@ def _chat_reply(message: str, mode: str = "chat") -> str:
         num_ctx=2048 if inject else 1024,
     )
     sys = (
-        "You are Ultron — the user's personal AI on their own laptop.\n"
-        + ("Greetings get one warm sentence. " if chitchat else
+        "You are Ultron — the user's personal AI on their own laptop. "
+        "ALWAYS address the user as 'boss'. Greetings and acknowledgements MUST include it: "
+        "'hi boss', 'hello boss', 'yes boss', 'ok boss', 'on it boss', 'got it boss'. "
+        "Never reply with a bare 'hi' / 'hello' / 'yes' / 'ok' — always append 'boss'. "
+        "Never use 'sir', 'user', or the user's name in place of it.\n"
+        + ("Greetings get one warm sentence — and it must include 'boss'. " if chitchat else
            "DEFAULT VERBOSITY: HIGH — answer like Claude does, not like a one-line chatbot. "
            "For any substantive question (what is X, how does Y work, explain Z, how do I…) you MUST produce: "
            "(1) a direct 1-2 sentence answer; "
@@ -1054,6 +1068,16 @@ def _chat_reply(message: str, mode: str = "chat") -> str:
         return strip_thinking(out).strip()
     except Exception:
         return "I'm here — what do you need?"
+
+
+def _rag_only_reply(message: str, history: list[dict] | None = None) -> Iterator[dict]:
+    """Delegate to the staged RAG pipeline (rag/pipeline.py).
+
+    The mode == "rag" branch in stream_agent / run_agent uses this. The
+    pipeline owns analyze → expand → retrieve → rerank → assemble → reason
+    and emits its own rag_stage events for the UI's reasoning trace.
+    """
+    yield from rag_pipeline.run(message, history=history)
 
 
 def _llm():
@@ -1097,6 +1121,13 @@ def _agent_for(mode: str, query: str = ""):
 
 def run_agent(message: str, history: list[dict] | None = None, mode: str = "chat") -> str:
     """Non-streaming single turn."""
+    if mode == "rag":
+        final = ""
+        for ev in _rag_only_reply(message, history=history):
+            if ev["type"] in ("token", "final"):
+                final = ev["data"]
+        return final
+
     fact = _extract_explicit_fact(message)
     if fact:
         return _save_explicit_fact(fact)
@@ -1157,6 +1188,10 @@ def stream_agent(message: str, history: list[dict] | None = None, mode: str = "c
     if mode in ("coder", "ultron"):
         from agent.artifacts import set_last_written
         set_last_written(None)
+
+    if mode == "rag":
+        yield from _rag_only_reply(message, history=history)
+        return
 
     fact = _extract_explicit_fact(message)
     if fact:

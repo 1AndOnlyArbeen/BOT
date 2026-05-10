@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from config import DB_PATH
 
 
-VALID_MODES = ("ultron", "chat", "coder")
+VALID_MODES = ("ultron", "chat", "coder", "rag")
 DEFAULT_MODE = "ultron"
 
 SCHEMA = """

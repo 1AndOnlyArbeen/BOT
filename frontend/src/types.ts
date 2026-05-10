@@ -1,4 +1,4 @@
-export type Mode = "ultron" | "chat" | "coder";
+export type Mode = "chat" | "coder" | "rag";
 
 export interface Session {
   id: number;
@@ -12,6 +12,49 @@ export interface Message {
   content: string;
 }
 
+export type RagStageName =
+  | "analyze"
+  | "expand"
+  | "retrieve"
+  | "rerank"
+  | "assemble"
+  | "reason";
+
+export type RagStageStatus = "running" | "done";
+
+export interface RagStageDataBase {
+  name: RagStageName;
+  status: RagStageStatus;
+  summary: string;
+}
+
+export interface RagStageRetrieveDetail {
+  count?: number;
+  sources?: string[];
+}
+
+export interface RagStageRerankDetail {
+  kept?: { index: number; label: string; matches: number }[];
+}
+
+export interface RagStageExpandDetail {
+  variants?: string[];
+}
+
+export interface RagStageAnalyzeDetail {
+  intent?: string;
+  target_k?: number;
+}
+
+export type RagStageData = RagStageDataBase &
+  RagStageRetrieveDetail &
+  RagStageRerankDetail &
+  RagStageExpandDetail &
+  RagStageAnalyzeDetail & {
+    chars?: number;
+    length?: number;
+  };
+
 export type StreamEvent =
   | { type: "router"; data: { categories: string[]; tool_count: number } }
   | { type: "plan"; data: { request: string; steps: PlanStep[] } }
@@ -23,6 +66,7 @@ export type StreamEvent =
   | { type: "final"; data: string }
   | { type: "plan_done"; data: { summary: string } }
   | { type: "abort"; data: { reason: string } }
+  | { type: "rag_stage"; data: RagStageData }
   | { type: "error"; data: string };
 
 export interface PlanStep {
