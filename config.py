@@ -52,7 +52,7 @@ CODE_EXTENSIONS = {
     ".go", ".rs", ".java", ".cpp", ".c", ".h", ".rb", ".php",
 }
 
-LLM_MODEL = "qwen2.5-coder:7b"          # main model — used when tools / accuracy matter
+LLM_MODEL = "huihui_ai/qwen2.5-coder-abliterate:7b"   # main model — abliterated 7B (no refusals at the weight level)
 LLM_CHAT_MODEL = "qwen2.5-coder:3b"     # fast model — used for chitchat fast path (3x faster on CPU)
 EMBED_MODEL = "nomic-embed-text"
 
