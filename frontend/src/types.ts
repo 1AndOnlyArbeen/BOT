@@ -13,6 +13,7 @@ export interface Message {
 }
 
 export type RagStageName =
+  | "contextualize"
   | "analyze"
   | "expand"
   | "retrieve"
@@ -46,11 +47,17 @@ export interface RagStageAnalyzeDetail {
   target_k?: number;
 }
 
+export interface RagStageContextualizeDetail {
+  rewritten?: string;
+  original?: string;
+}
+
 export type RagStageData = RagStageDataBase &
   RagStageRetrieveDetail &
   RagStageRerankDetail &
   RagStageExpandDetail &
-  RagStageAnalyzeDetail & {
+  RagStageAnalyzeDetail &
+  RagStageContextualizeDetail & {
     chars?: number;
     length?: number;
   };
@@ -67,6 +74,7 @@ export type StreamEvent =
   | { type: "plan_done"; data: { summary: string } }
   | { type: "abort"; data: { reason: string } }
   | { type: "rag_stage"; data: RagStageData }
+  | { type: "cli_stage"; data: { name: string; status: string; summary: string; [k: string]: unknown } }
   | { type: "error"; data: string };
 
 export interface PlanStep {

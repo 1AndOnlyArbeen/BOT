@@ -19,7 +19,7 @@ export const api = {
 
   listSessions: (mode?: Mode) =>
     j<Session[]>(mode ? `/chat/sessions?mode=${mode}` : "/chat/sessions"),
-  newSession: (title = "New chat", mode: Mode = "ultron") =>
+  newSession: (title = "New chat", mode: Mode = "chat") =>
     j<{ id: number; title: string; mode: Mode }>("/chat/sessions", {
       method: "POST",
       body: JSON.stringify({ title, mode }),

@@ -1,0 +1,29 @@
+# Ultron project notes
+
+_Auto-created on first run — edit freely. Ultron reads this every turn._
+
+## Profile (auto-detected)
+- **Project**: `workspace`
+- **Languages**: unknown
+- **Frameworks**: (none)
+- **Package manager**: `n/a`
+- **Test command**: `not detected`
+- **Build command**: `not detected`
+- **Run command**: `not detected`
+- **Git repo**: no
+- **Detected manifests**: (none)
+
+## Conventions
+_Add anything Ultron should always remember about how to write code in this repo._
+- (e.g. 4-space indent, single quotes, snake_case for functions)
+
+## Common commands
+_Useful one-liners — Ultron will prefer these over guessing._
+- (e.g. `npm run dev`, `pytest -k unit`)
+
+## Current focus
+_What you're working on right now — Ultron will keep this in mind._
+- (e.g. "rewriting the auth flow to use JWT")
+
+## Pinned
+_Anything important that doesn't fit elsewhere._

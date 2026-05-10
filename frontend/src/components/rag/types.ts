@@ -14,6 +14,7 @@ export interface StageState {
 export type Stages = Record<RagStageName, StageState>;
 
 export const INITIAL_STAGES: Stages = {
+  contextualize: { status: "pending" },
   analyze: { status: "pending" },
   expand: { status: "pending" },
   retrieve: { status: "pending" },
@@ -23,6 +24,7 @@ export const INITIAL_STAGES: Stages = {
 };
 
 export const STAGE_ORDER: RagStageName[] = [
+  "contextualize",
   "analyze",
   "expand",
   "retrieve",
@@ -32,6 +34,7 @@ export const STAGE_ORDER: RagStageName[] = [
 ];
 
 export const STAGE_LABEL: Record<RagStageName, string> = {
+  contextualize: "Contextualize",
   analyze: "Analyze",
   expand: "Expand",
   retrieve: "Retrieve",

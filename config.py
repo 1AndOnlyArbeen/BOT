@@ -52,14 +52,14 @@ CODE_EXTENSIONS = {
     ".go", ".rs", ".java", ".cpp", ".c", ".h", ".rb", ".php",
 }
 
-LLM_MODEL = "llama3.2:3b"
+LLM_MODEL = "qwen2.5-coder:7b"          # main model — used when tools / accuracy matter
+LLM_CHAT_MODEL = "qwen2.5-coder:3b"     # fast model — used for chitchat fast path (3x faster on CPU)
 EMBED_MODEL = "nomic-embed-text"
 
 LLM_TEMPERATURE = 0.3
-LLM_NUM_CTX = 8192         # context window — pushed to llama3.2:3b's safe local-CPU max
-                           # so memory + RAG + workspace primer + history all fit comfortably
-LLM_NUM_PREDICT = 1800     # max output tokens — high so responses feel detailed like Claude
-                           # (3B model may sometimes drift on long outputs; lower to 800 if quality drops)
+LLM_NUM_CTX = 8192         # context window — fits memory + RAG + workspace primer + history
+LLM_NUM_PREDICT = 1000     # max output tokens — was 1800 but capped lower to keep replies snappy on CPU
+LLM_NUM_THREAD = 12        # CPU threads — match physical cores for max throughput
 
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50

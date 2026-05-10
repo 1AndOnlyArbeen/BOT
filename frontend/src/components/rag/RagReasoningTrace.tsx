@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Brain, Sparkles, Search, ListOrdered, Layers, Lightbulb } from "lucide-react";
+import { ChevronDown, ChevronRight, Brain, Sparkles, Search, ListOrdered, Layers, Lightbulb, MessagesSquare } from "lucide-react";
 import clsx from "clsx";
 import type { RagStageName } from "../../types";
 import type { Stages } from "./types";
 import { STAGE_LABEL, STAGE_ORDER } from "./types";
 
 const STAGE_ICON: Record<RagStageName, typeof Brain> = {
+  contextualize: MessagesSquare,
   analyze: Brain,
   expand: Sparkles,
   retrieve: Search,
@@ -87,6 +88,25 @@ export function RagReasoningTrace({ stages, isStreaming }: Props) {
 function StageDetail({ name, stages }: { name: RagStageName; stages: Stages }) {
   const data = stages[name].data;
   if (!data) return null;
+
+  if (
+    name === "contextualize" &&
+    data.rewritten &&
+    data.original &&
+    data.rewritten !== data.original
+  ) {
+    return (
+      <div className="mt-1 text-[11px] font-mono space-y-0.5">
+        <div className="text-muted truncate" title={data.original}>
+          <span className="text-muted/70">orig:</span> {data.original}
+        </div>
+        <div className="text-accent2 truncate" title={data.rewritten}>
+          <span className="text-muted/70">→ </span>
+          {data.rewritten}
+        </div>
+      </div>
+    );
+  }
 
   if (name === "expand" && data.variants && data.variants.length > 0) {
     return (

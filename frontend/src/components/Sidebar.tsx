@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
-  MessageSquare, Brain, Zap, ListChecks, FolderCode,
-  BarChart3, KeyRound, Plus, Trash2, Cpu, Wifi, GitBranch, GraduationCap, Database,
+  MessageSquare, Brain, FolderCode,
+  BarChart3, Plus, Trash2, Cpu, Wifi, GitBranch, GraduationCap, Database,
 } from "lucide-react";
 import clsx from "clsx";
 import { useStore, useSessionId } from "../store";
@@ -11,19 +11,15 @@ import { Pagination, paginate } from "./Pagination";
 
 const VIEWS = [
   { id: "chat", icon: MessageSquare, label: "Chat" },
+  { id: "rag", icon: Database, label: "RAG" },
+  { id: "files", icon: FolderCode, label: "Coder" },
   { id: "codebase", icon: GitBranch, label: "Codebase" },
   { id: "training", icon: GraduationCap, label: "Training" },
-  { id: "files", icon: FolderCode, label: "Coder" },
-  { id: "rag", icon: Database, label: "RAG" },
   { id: "memory", icon: Brain, label: "Memory" },
-  { id: "macros", icon: Zap, label: "Macros" },
-  { id: "tasks", icon: ListChecks, label: "Tasks" },
   { id: "stats", icon: BarChart3, label: "Stats" },
-  { id: "vault", icon: KeyRound, label: "Vault" },
 ] as const;
 
 const MODES: { id: Mode; label: string }[] = [
-  { id: "ultron", label: "Ultron" },
   { id: "chat", label: "Chat" },
   { id: "coder", label: "Coder" },
 ];
@@ -87,7 +83,7 @@ export function Sidebar() {
 
       <div className="px-3 pt-3">
         <div className="text-[10px] uppercase tracking-wider text-muted mb-2 font-semibold px-1">Mode</div>
-        <div className="grid grid-cols-3 gap-1 mb-3">
+        <div className="grid grid-cols-2 gap-1 mb-3">
           {MODES.map((m) => (
             <button
               key={m.id}

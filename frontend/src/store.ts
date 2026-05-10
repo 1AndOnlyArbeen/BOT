@@ -28,6 +28,19 @@ export const useStore = create<State>()(
     }),
     {
       name: "ultron-ui",
+      version: 2,
+      migrate: (persisted: any, fromVersion) => {
+        if (fromVersion < 2) {
+          const validModes = ["chat", "coder", "rag"];
+          const validViews = ["chat", "memory", "files", "stats", "codebase", "training", "rag"];
+          return {
+            mode: validModes.includes(persisted?.mode) ? persisted.mode : "chat",
+            sessionByMode: { chat: null, coder: null, rag: null },
+            view: validViews.includes(persisted?.view) ? persisted.view : "chat",
+          };
+        }
+        return persisted;
+      },
       partialize: (s) => ({
         mode: s.mode,
         sessionByMode: s.sessionByMode,
@@ -38,4 +51,4 @@ export const useStore = create<State>()(
 );
 
 export const useSessionId = (): number | null =>
-  useStore((s) => s.sessionByMode[s.mode]);
+  useStore((s) => s.sessionByMode[s.mode] ?? null);

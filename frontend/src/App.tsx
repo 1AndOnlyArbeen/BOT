@@ -35,11 +35,8 @@ export default function App() {
       <main className="flex-1 flex flex-col min-w-0">
         {view === "chat" && <ChatView />}
         {view === "memory" && <MemoryView />}
-        {view === "macros" && <MacrosView />}
-        {view === "tasks" && <TasksView />}
         {view === "files" && <CoderView />}
         {view === "stats" && <StatsView />}
-        {view === "vault" && <VaultView />}
         {view === "codebase" && <CodebaseView />}
         {view === "training" && <TrainingView />}
         {view === "rag" && <RagView />}

@@ -14,6 +14,8 @@ import json
 import logging
 import os
 import sys
+import threading
+import time
 import warnings
 from typing import Iterable, Iterator
 
@@ -174,6 +176,19 @@ def remote_get_messages(base_url: str, session_id: int) -> list[dict]:
 
 
 # ───────────────────────────────────── ui ─────────────────────────────────────
+
+ULTRON_LOGO = r"""
+██╗   ██╗██╗  ████████╗██████╗  ██████╗ ███╗   ██╗
+██║   ██║██║  ╚══██╔══╝██╔══██╗██╔═══██╗████╗  ██║
+██║   ██║██║     ██║   ██████╔╝██║   ██║██╔██╗ ██║
+██║   ██║██║     ██║   ██╔══██╗██║   ██║██║╚██╗██║
+╚██████╔╝███████╗██║   ██║  ██║╚██████╔╝██║ ╚████║
+ ╚═════╝ ╚══════╝╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚══╝
+"""
+
+ULTRON_TAGLINE = "local · agentic · made by arbeen"
+
+
 class CLI:
     def __init__(self, mode: str, use_planner: bool, remote: str | None, session_id: int | None,
                  confirm: str = "off") -> None:
@@ -220,13 +235,24 @@ class CLI:
     def banner(self) -> None:
         from config import WORKSPACE_DIR
         target = self.remote or "direct"
-        self.console.print(Panel.fit(
-            f"[bold cyan]ULTRON[/bold cyan] CLI · mode=[yellow]{self.mode}[/yellow] · "
-            f"session=[green]{self.session_id}[/green] · {target}\n"
-            f"[dim]workspace:[/dim] [green]{WORKSPACE_DIR}[/green]\n"
-            f"[dim]/help for commands · Ctrl-D to quit[/dim]",
-            border_style="cyan",
-        ))
+
+        # Logo + tagline as the centrepiece.
+        self.console.print(f"[bold red]{ULTRON_LOGO}[/bold red]", end="")
+        self.console.print(f"[dim italic]            {ULTRON_TAGLINE}[/dim italic]\n")
+
+        # Info grid — keys cyan, values bright. Two columns for compactness.
+        info = (
+            f"  [cyan]mode[/cyan]    [bold yellow]{self.mode}[/bold yellow]"
+            f"        [cyan]session[/cyan]  [bold green]{self.session_id}[/bold green]"
+            f"        [cyan]target[/cyan]  [bold]{target}[/bold]\n"
+            f"  [cyan]cwd[/cyan]     [green]{WORKSPACE_DIR}[/green]\n"
+        )
+        self.console.print(info)
+        self.console.print(
+            "  [dim]/help[/dim] for commands  ·  "
+            "[dim]Ctrl-D[/dim] to quit"
+        )
+        self.console.print()
 
     def info(self) -> None:
         self.console.print(
@@ -267,55 +293,99 @@ class CLI:
         return msgs
 
     def _render_stream(self, events: Iterable[dict]) -> str:
+        """Render the event stream with a sticky spinner (stage + elapsed) until
+        the model starts streaming tokens, then switch to a live Markdown preview."""
         final = ""
-        live_text = ""
         plan_steps: list[dict] = []
-        first_event_seen = False
+
+        start = time.monotonic()
+        stage = "thinking…"
+        streaming = False
+        stop_tick = threading.Event()
+        state_lock = threading.Lock()
+
+        def make_spinner() -> Spinner:
+            elapsed = int(time.monotonic() - start)
+            return Spinner("dots", text=f"[dim]{stage} ({elapsed}s · ctrl-c to stop)[/dim]", style="cyan")
+
         with Live(
-            Spinner("dots", text="thinking…", style="dim"),
+            make_spinner(),
             console=self.console,
-            refresh_per_second=12,
+            refresh_per_second=10,
             vertical_overflow="visible",
+            transient=False,
         ) as live:
-            for ev in events:
-                if not first_event_seen:
-                    first_event_seen = True
-                    live.update("")
-                t = ev.get("type")
-                d = ev.get("data")
-                if t == "router":
-                    cats = ", ".join(d.get("categories", [])) or "default"
-                    self.console.print(f"[dim]🧭 {cats} · {d.get('tool_count', 0)} tools[/dim]")
-                elif t == "plan":
-                    plan_steps = d.get("steps", [])
-                    self.console.print("[bold yellow]Plan:[/bold yellow]")
-                    for s in plan_steps:
-                        self.console.print(f"  [dim]{s['index']}.[/dim] {s.get('goal','')}")
-                elif t == "step_start":
-                    self.console.print(f"[dim]→ step {d.get('index')}: {d.get('goal','')}[/dim]")
-                elif t == "step_end":
-                    status = d.get("status", "ok")
-                    color = "green" if status == "ok" else "red"
-                    self.console.print(f"  [{color}]·[/{color}] {str(d.get('result',''))[:200]}")
-                elif t == "tool_call":
-                    self.console.print(f"[magenta]🔧 {d.get('name','?')}[/magenta] [dim]{str(d.get('args',''))[:120]}[/dim]")
-                elif t == "tool_result":
-                    snippet = str(d.get("content", ""))[:200].replace("\n", " ")
-                    self.console.print(f"   [dim]↳ {snippet}[/dim]")
-                elif t == "token":
-                    live_text = d if isinstance(d, str) else str(d)
-                    final = live_text
-                    live.update(Markdown(live_text))
-                elif t == "final":
-                    final = d if isinstance(d, str) else str(d)
-                    live.update(Markdown(final))
-                elif t == "plan_done":
-                    summary = (d or {}).get("summary") or final
-                    final = summary
-                    live.update(Markdown(summary))
-                elif t == "error":
-                    self.console.print(f"[red]⚠ {d}[/red]")
-                    final = f"⚠️ {d}"
+            def tick() -> None:
+                while not stop_tick.is_set():
+                    with state_lock:
+                        if not streaming:
+                            live.update(make_spinner())
+                    stop_tick.wait(0.4)
+
+            ticker = threading.Thread(target=tick, daemon=True)
+            ticker.start()
+
+            try:
+                for ev in events:
+                    t = ev.get("type")
+                    d = ev.get("data")
+                    if t == "router":
+                        cats = ", ".join(d.get("categories", [])) or "default"
+                        self.console.print(f"[dim]🧭 routing → {cats} · {d.get('tool_count', 0)} tools[/dim]")
+                        with state_lock:
+                            stage = "thinking…"
+                    elif t == "plan":
+                        plan_steps = d.get("steps", [])
+                        self.console.print("[bold yellow]Plan:[/bold yellow]")
+                        for s in plan_steps:
+                            self.console.print(f"  [dim]{s['index']}.[/dim] {s.get('goal','')}")
+                        with state_lock:
+                            stage = "executing plan…"
+                    elif t == "step_start":
+                        goal = str(d.get("goal", ""))[:60]
+                        self.console.print(f"[dim]→ step {d.get('index')}: {d.get('goal','')}[/dim]")
+                        with state_lock:
+                            stage = f"step {d.get('index')}: {goal}"
+                    elif t == "step_end":
+                        status = d.get("status", "ok")
+                        color = "green" if status == "ok" else "red"
+                        self.console.print(f"  [{color}]·[/{color}] {str(d.get('result',''))[:200]}")
+                        with state_lock:
+                            stage = "thinking…"
+                    elif t == "tool_call":
+                        name = d.get("name", "?")
+                        self.console.print(f"[magenta]🔧 {name}[/magenta] [dim]{str(d.get('args',''))[:120]}[/dim]")
+                        with state_lock:
+                            stage = f"running {name}…"
+                    elif t == "tool_result":
+                        snippet = str(d.get("content", ""))[:200].replace("\n", " ")
+                        self.console.print(f"   [dim]↳ {snippet}[/dim]")
+                        with state_lock:
+                            stage = "thinking…"
+                    elif t == "token":
+                        text = d if isinstance(d, str) else str(d)
+                        final = text
+                        with state_lock:
+                            streaming = True
+                        live.update(Markdown(text))
+                    elif t == "final":
+                        text = d if isinstance(d, str) else str(d)
+                        final = text
+                        with state_lock:
+                            streaming = True
+                        live.update(Markdown(text))
+                    elif t == "plan_done":
+                        summary = (d or {}).get("summary") or final
+                        final = summary
+                        with state_lock:
+                            streaming = True
+                        live.update(Markdown(summary))
+                    elif t == "error":
+                        self.console.print(f"[red]⚠ {d}[/red]")
+                        final = f"⚠️ {d}"
+            finally:
+                stop_tick.set()
+                ticker.join(timeout=1.0)
         return final
 
     # -- slash commands --
@@ -473,9 +543,53 @@ class CLI:
         finally:
             set_context(prev_ctx)
 
+    def _warm_up_in_background(self) -> None:
+        """Pre-load the heavy stuff so the first turn isn't slow.
+
+        Two costs the first turn pays unnecessarily:
+          1. cli.tools imports 43 tools (~1.7s on a 12-thread CPU).
+          2. Ollama loads the model into RAM (~1.4s) — and unloads it after
+             5 min idle by default, so this can repeat.
+
+        Both run on a daemon thread while the user reads the banner. By the
+        time they finish typing 'hi', everything is hot.
+        """
+        def warm() -> None:
+            try:
+                if not self.remote:
+                    import cli.runner  # noqa: F401  — preload coder pipeline + 43 tools
+            except Exception:
+                pass
+            try:
+                import urllib.request
+                import json as _json
+                from config import LLM_MODEL
+                target = self.remote or "http://localhost:11434"
+                # Tiny generate call → Ollama loads the GGUF into RAM and keeps
+                # it warm for the configured keep-alive window.
+                if "11434" in target or not self.remote:
+                    body = _json.dumps({
+                        "model": LLM_MODEL,
+                        "prompt": "",
+                        "keep_alive": "30m",
+                        "options": {"num_predict": 1},
+                    }).encode("utf-8")
+                    req = urllib.request.Request(
+                        "http://localhost:11434/api/generate",
+                        data=body,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    urllib.request.urlopen(req, timeout=30).read()
+            except Exception:
+                pass
+
+        threading.Thread(target=warm, name="ultron-warmup", daemon=True).start()
+
     # -- repl loop --
     def repl(self) -> None:
         self.banner()
+        self._warm_up_in_background()
         while True:
             try:
                 line = self.console.input(f"[bold cyan]{self.mode}[/bold cyan][dim]›[/dim] ")

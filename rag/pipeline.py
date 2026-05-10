@@ -3,12 +3,13 @@
 The pipeline is intentionally split into small, single-purpose stages so each
 one can be tuned (or replaced) without touching the rest:
 
-    analyze  → classify the user's intent
-    expand   → generate query variants for hard questions
-    retrieve → MMR vector search per variant
-    rerank   → fuse + re-score by occurrence + position
-    assemble → format the chosen chunks into a citation-ready block
-    reason   → stream the final answer with intent-tuned prompting
+    contextualize → rewrite follow-up turns into standalone search queries
+    analyze       → classify the user's intent
+    expand        → generate query variants for hard questions
+    retrieve      → MMR vector search per variant
+    rerank        → fuse + re-score by occurrence + position
+    assemble      → format the chosen chunks into a citation-ready block
+    reason        → stream the final answer with intent-tuned prompting
 
 Each stage yields a `rag_stage` event the UI can render as a reasoning trace.
 The shape is `{"type": "rag_stage", "data": {"name", "status", "summary", ...}}`.
@@ -57,6 +58,79 @@ MMR_LAMBDA = 0.55  # 0 = max diversity, 1 = pure relevance
 
 # Cap query variants to keep retrieval latency bounded on local LLMs.
 MAX_VARIANTS = 3
+
+
+# --- History-aware contextualization ---------------------------------------
+#
+# Follow-up turns ("what about latency?", "tell me more", "and the second one?")
+# are useless for retrieval on their own — they reference subjects from earlier
+# turns the vector store has never seen. We rewrite them into standalone search
+# queries before analyze/expand/retrieve. The user's *original* message is kept
+# verbatim for the final answer so the model still answers what they actually
+# asked, in their own words.
+#
+# Cheap heuristic first — only call the LLM when a turn looks like a follow-up
+# (pronouns, short, or starts with a continuation word). Keeps the common case
+# fast on a local model.
+
+_FOLLOWUP_RE = re.compile(
+    r"\b(it|its|they|them|their|those|these|this|that|"
+    r"the\s+(?:first|second|third|fourth|fifth|last|other|next|previous|same|former|latter))\b|"
+    r"^\s*(and|also|but|so|then|why|how|what|tell\s+me|more|"
+    r"what\s+about|how\s+about|what\s+if)\b",
+    re.IGNORECASE,
+)
+
+_CONTEXTUALIZE_SYSTEM = (
+    "You receive a conversation between a user and an assistant, and the user's "
+    "LATEST message. Rewrite that latest message as a STANDALONE search query "
+    "that captures the full intent, resolving any pronouns or references using "
+    "the prior turns. If the message is already standalone, output it unchanged. "
+    "Output ONLY the rewritten query — one line, no quotes, no commentary, "
+    "no leading 'Search:' label."
+)
+
+
+def _looks_like_followup(message: str, history: list[dict]) -> bool:
+    if not history:
+        return False
+    msg = (message or "").strip()
+    if not msg:
+        return False
+    if len(msg.split()) <= 4:
+        return True
+    return bool(_FOLLOWUP_RE.search(msg))
+
+
+def contextualize(message: str, history: list[dict] | None) -> str:
+    """Rewrite a follow-up turn into a standalone query using recent history."""
+    if not history or not _looks_like_followup(message, history):
+        return message
+
+    recent = [m for m in history[-6:] if m.get("role") in ("user", "assistant")]
+    if not recent:
+        return message
+
+    convo = "\n".join(
+        f"{m['role']}: {str(m.get('content', ''))[:400]}" for m in recent
+    )
+    user_block = (
+        f"Conversation so far:\n{convo}\n\n"
+        f"Latest user message: {message}\n\n"
+        f"Standalone search query:"
+    )
+    try:
+        llm = ChatOllama(model=LLM_MODEL, temperature=0.1, num_predict=80, num_ctx=1024)
+        out = llm.invoke([("system", _CONTEXTUALIZE_SYSTEM), ("user", user_block)]).content
+    except Exception:
+        return message
+
+    rewritten = (out or "").strip().splitlines()[0].strip() if out else ""
+    rewritten = rewritten.strip().strip('"').strip("'").strip()
+    rewritten = re.sub(r"^(?:standalone\s+)?(?:search\s+)?query[:\-]\s*", "", rewritten, flags=re.IGNORECASE)
+    if not rewritten or len(rewritten) > 300 or len(rewritten) < 3:
+        return message
+    return rewritten
 
 
 # --- Heuristic intent classifier -------------------------------------------
@@ -356,8 +430,25 @@ def run(message: str, history: list[dict] | None = None) -> Iterator[dict]:
         yield {"type": "final", "data": msg}
         return
 
-    # 1. analyze
-    analysis = analyze(message)
+    # 0. contextualize — resolve pronouns / follow-ups using recent history
+    search_query = message
+    if history:
+        yield _stage_event("contextualize", "running", "rewriting follow-up with history…")
+        search_query = contextualize(message, history)
+        if search_query == message:
+            yield _stage_event(
+                "contextualize", "done", "standalone — no rewrite needed",
+                rewritten=search_query, original=message,
+            )
+        else:
+            yield _stage_event(
+                "contextualize", "done",
+                f"rewrote → {search_query[:90]}",
+                rewritten=search_query, original=message,
+            )
+
+    # 1. analyze (use the contextualized query so short follow-ups aren't off-topic)
+    analysis = analyze(search_query)
     yield _stage_event(
         "analyze", "done", analysis.summary,
         intent=analysis.intent, target_k=analysis.target_k,
@@ -370,7 +461,7 @@ def run(message: str, history: list[dict] | None = None) -> Iterator[dict]:
 
     # 2. expand
     yield _stage_event("expand", "running", "rewriting query…")
-    queries = expand(message, analysis)
+    queries = expand(search_query, analysis)
     yield _stage_event(
         "expand", "done",
         f"{len(queries)} query variant{'s' if len(queries) != 1 else ''}",
@@ -414,7 +505,7 @@ def run(message: str, history: list[dict] | None = None) -> Iterator[dict]:
     # 5. assemble — also emit legacy tool_call/tool_result so the existing
     # citation chip strip in the UI keeps working.
     block, kept = assemble(ranked, char_budget=analysis.char_budget)
-    yield {"type": "tool_call", "data": {"name": "rag_search", "args": message[:120]}}
+    yield {"type": "tool_call", "data": {"name": "rag_search", "args": search_query[:120]}}
     yield {"type": "tool_result", "data": {"name": "rag_search", "content": block[:600]}}
     yield _stage_event(
         "assemble", "done",

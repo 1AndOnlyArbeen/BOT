@@ -3,39 +3,21 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Send, Volume2, VolumeX, Wand2, Zap, Square, RefreshCw, Copy, Check } from "lucide-react";
+import { Send, Square, RefreshCw, Copy, Check } from "lucide-react";
 import clsx from "clsx";
 import { useStore, useSessionId } from "../store";
 import { api } from "../api";
-import type { Message, StreamEvent, PlanStep } from "../types";
-import { VoiceRecorder } from "./VoiceRecorder";
-
-interface PlanState {
-  steps: PlanStep[];
-  current?: number;
-  results: Record<number, { status: string; result: string }>;
-}
-
-interface ToolCall {
-  name: string;
-  args: string;
-}
+import type { Message, StreamEvent } from "../types";
 
 export function ChatView() {
   const sessionId = useSessionId();
   const mode = useStore((s) => s.mode);
-  const voiceOut = useStore((s) => s.voiceOut);
-  const setVoiceOut = useStore((s) => s.setVoiceOut);
-  const usePlanner = useStore((s) => s.usePlanner);
-  const setUsePlanner = useStore((s) => s.setUsePlanner);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
-  const [plan, setPlan] = useState<PlanState | null>(null);
-  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
-  const [routerInfo, setRouterInfo] = useState<string>("");
+  const [status, setStatus] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -43,14 +25,13 @@ export function ChatView() {
     if (sessionId) {
       api.listMessages(sessionId).then(setMessages);
       setStreamingText("");
-      setPlan(null);
-      setToolCalls([]);
+      setStatus("");
     }
   }, [sessionId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, streamingText, plan]);
+  }, [messages, streamingText]);
 
   const handleStop = () => {
     abortRef.current?.abort();
@@ -75,9 +56,7 @@ export function ChatView() {
       setMessages((m) => [...m, { role: "user", content: msg }]);
     }
     setStreamingText("");
-    setPlan(null);
-    setToolCalls([]);
-    setRouterInfo("");
+    setStatus("starting…");
     setIsStreaming(true);
 
     const ac = new AbortController();
@@ -85,27 +64,26 @@ export function ChatView() {
 
     let final = "";
     try {
-      await api.streamChat(sessionId, msg, mode, usePlanner, (e: StreamEvent) => {
+      await api.streamChat(sessionId, msg, mode, false, (e: StreamEvent) => {
         switch (e.type) {
           case "router":
-            setRouterInfo(`${e.data.categories.join(", ") || "default"} · ${e.data.tool_count} tools`);
-            break;
-          case "plan":
-            setPlan({ steps: e.data.steps, results: {} });
-            break;
-          case "step_start":
-            setPlan((p) => p && { ...p, current: e.data.index });
-            break;
-          case "step_end":
-            setPlan((p) =>
-              p && {
-                ...p,
-                results: { ...p.results, [e.data.index]: { status: e.data.status, result: e.data.result } },
-              },
+            setStatus(
+              e.data.categories.length
+                ? `routed → ${e.data.categories.join(", ")}`
+                : "routing…",
             );
             break;
+          case "cli_stage":
+            setStatus(`${e.data.name}: ${e.data.summary}`);
+            break;
+          case "rag_stage":
+            setStatus(`${e.data.name}: ${e.data.summary}`);
+            break;
           case "tool_call":
-            setToolCalls((t) => [...t, e.data]);
+            setStatus(`calling ${e.data.name}…`);
+            break;
+          case "tool_result":
+            setStatus(`${e.data.name} → done`);
             break;
           case "token":
             setStreamingText(e.data);
@@ -113,10 +91,6 @@ export function ChatView() {
           case "final":
             final = e.data;
             setStreamingText(e.data);
-            break;
-          case "plan_done":
-            final = e.data.summary || final;
-            setStreamingText(e.data.summary || final);
             break;
           case "error":
             final = `⚠️ ${e.data}`;
@@ -135,72 +109,26 @@ export function ChatView() {
 
     abortRef.current = null;
     setIsStreaming(false);
+    setStatus("");
     if (final) {
       setMessages((m) => [...m, { role: "assistant", content: final }]);
       setStreamingText("");
-      if (voiceOut) api.speak(final).catch(() => {});
     }
     api.listSessions(mode);
-  };
-
-  const handleVoice = async (blob: Blob) => {
-    try {
-      const r = await api.stt(blob);
-      if (r.text) {
-        handleSend(r.text);
-      } else if (r.error) {
-        setRouterInfo(`🎙 stt error: ${r.error}`);
-      } else if (r.bytes < 4000) {
-        setRouterInfo("🎙 mic captured almost no audio — check permission / input device");
-      } else {
-        setRouterInfo("🎙 no speech detected — try speaking louder / longer");
-      }
-    } catch (e: any) {
-      setRouterInfo(`🎙 stt failed: ${e.message ?? e}`);
-      console.error(e);
-    }
   };
 
   return (
     <div className="flex flex-col h-full">
       <header className="flex items-center justify-between px-6 py-3 border-b border-border bg-panel">
-        <div className="flex items-center gap-3">
-          <h2 className="font-semibold capitalize">{mode}</h2>
-          {routerInfo && (
-            <span className="text-xs text-muted bg-panel2 px-2 py-1 rounded font-mono">
-              🧭 {routerInfo}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setUsePlanner(!usePlanner)}
-            title="Plan-then-execute"
-            className={clsx(
-              "p-2 rounded transition-colors",
-              usePlanner ? "text-accent2 bg-panel2" : "text-muted hover:text-text",
-            )}
-          >
-            <Wand2 className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setVoiceOut(!voiceOut)}
-            className={clsx(
-              "p-2 rounded transition-colors",
-              voiceOut ? "text-accent2 bg-panel2" : "text-muted hover:text-text",
-            )}
-          >
-            {voiceOut ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-          </button>
-        </div>
+        <h2 className="font-semibold capitalize">{mode}</h2>
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
         <div className="max-w-3xl mx-auto">
           {messages.length === 0 && !isStreaming && (
             <div className="text-center py-20 text-muted">
               <h1 className="text-4xl font-bold tracking-widest mb-3 brand-text">ULTRON ONLINE</h1>
-              <p>Voice or type. I plan, search, code, and control your laptop.</p>
+              <p>Type a message to get started, boss.</p>
             </div>
           )}
 
@@ -209,44 +137,50 @@ export function ChatView() {
           ))}
 
           {isStreaming && (
-            <div className="my-4">
-              {plan && <PlanCard plan={plan} />}
-              {toolCalls.length > 0 && (
-                <details className="mb-3 bg-panel2 border border-border rounded-md px-3 py-2">
-                  <summary className="text-xs text-muted cursor-pointer">
-                    🔧 {toolCalls.length} tool call{toolCalls.length > 1 ? "s" : ""}
-                  </summary>
-                  <div className="mt-2 space-y-1">
-                    {toolCalls.map((tc, i) => (
-                      <div key={i} className="text-xs font-mono text-accent2 truncate">
-                        {tc.name}({tc.args})
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              )}
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-sm">
-                  🦾
-                </div>
-                <div className="flex-1 prose prose-invert max-w-none">
-                  {streamingText ? (
-                    <Markdown text={streamingText} />
-                  ) : (
-                    <div className="flex gap-1.5 mt-2">
-                      <span className="typing-dot w-2 h-2 bg-accent rounded-full" />
-                      <span className="typing-dot w-2 h-2 bg-accent rounded-full" />
-                      <span className="typing-dot w-2 h-2 bg-accent rounded-full" />
+            <div className="flex items-start gap-3 my-4">
+              <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-sm">
+                🦾
+              </div>
+              <div className="flex-1 min-w-0">
+                {!streamingText && (
+                  <div className="not-prose flex flex-col gap-1.5 mt-2">
+                    <div className="flex items-center gap-2 text-sm text-accent2">
+                      <span className="flex gap-1.5">
+                        <span className="typing-dot w-2 h-2 bg-accent rounded-full" />
+                        <span className="typing-dot w-2 h-2 bg-accent rounded-full" />
+                        <span className="typing-dot w-2 h-2 bg-accent rounded-full" />
+                      </span>
+                      <span className="font-medium">Thinking…</span>
                     </div>
-                  )}
-                </div>
+                    {status && (
+                      <div className="text-xs text-muted font-mono pl-1 truncate">
+                        {status}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {streamingText && (
+                  <div className="prose prose-invert max-w-none">
+                    {status && (
+                      <div className="not-prose flex items-center gap-2 mb-2 text-xs text-muted">
+                        <span className="flex gap-1">
+                          <span className="typing-dot w-1.5 h-1.5 bg-accent rounded-full" />
+                          <span className="typing-dot w-1.5 h-1.5 bg-accent rounded-full" />
+                          <span className="typing-dot w-1.5 h-1.5 bg-accent rounded-full" />
+                        </span>
+                        <span className="font-mono truncate">{status}</span>
+                      </div>
+                    )}
+                    <Markdown text={streamingText} />
+                  </div>
+                )}
               </div>
             </div>
           )}
         </div>
       </div>
 
-      <div className="border-t border-border bg-panel p-4">
+      <div className="border-t border-border bg-panel p-3 sm:p-4">
         <div className="max-w-3xl mx-auto">
           {!isStreaming && messages.length >= 2 && (
             <div className="flex justify-center mb-2">
@@ -259,7 +193,6 @@ export function ChatView() {
             </div>
           )}
           <div className="flex gap-2 items-end">
-            <VoiceRecorder onAudio={handleVoice} disabled={isStreaming} />
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -269,7 +202,7 @@ export function ChatView() {
                   handleSend();
                 }
               }}
-              placeholder={mode === "ultron" ? "Tell Ultron what to do…" : "Message Ultron…"}
+              placeholder="Message Ultron…"
               rows={1}
               className="flex-1 bg-panel2 border border-border rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:border-accent2 placeholder:text-muted"
               style={{ minHeight: "44px", maxHeight: "200px" }}
@@ -332,42 +265,6 @@ function MessageBubble({ message }: { message: Message }) {
             </button>
           </>
         )}
-      </div>
-    </div>
-  );
-}
-
-function PlanCard({ plan }: { plan: PlanState }) {
-  return (
-    <div className="bg-panel2 border border-border rounded-md px-4 py-3 mb-3">
-      <div className="flex items-center gap-2 text-xs text-accent2 mb-2 font-semibold">
-        <Zap className="w-3.5 h-3.5" /> EXECUTION PLAN
-      </div>
-      <div className="space-y-1.5">
-        {plan.steps.map((s) => {
-          const r = plan.results[s.index];
-          const running = plan.current === s.index && !r;
-          return (
-            <div key={s.index} className="flex items-start gap-2 text-sm">
-              <span className="text-muted font-mono mt-0.5">{s.index}.</span>
-              <span
-                className={clsx(
-                  "shrink-0 w-2 h-2 rounded-full mt-1.5",
-                  r?.status === "ok" && "bg-accent2",
-                  r?.status === "failed" && "bg-accent",
-                  running && "bg-accent2 animate-pulse",
-                  !r && !running && "bg-muted/40",
-                )}
-              />
-              <div className="flex-1">
-                <div className={clsx(running && "text-accent2")}>{s.goal}</div>
-                {r && (
-                  <div className="text-xs text-muted font-mono mt-0.5 truncate">{r.result}</div>
-                )}
-              </div>
-            </div>
-          );
-        })}
       </div>
     </div>
   );
