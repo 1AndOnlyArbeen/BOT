@@ -52,7 +52,7 @@ CODE_EXTENSIONS = {
     ".go", ".rs", ".java", ".cpp", ".c", ".h", ".rb", ".php",
 }
 
-LLM_MODEL = "llama3.2:3b"
+LLM_MODEL = "llama3.1:8b"
 EMBED_MODEL = "nomic-embed-text"
 
 LLM_TEMPERATURE = 0.3
