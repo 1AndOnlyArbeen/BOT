@@ -46,6 +46,55 @@ def is_self_referential(message: str) -> bool:
     return bool(_SELF_REFERENTIAL_RE.search(message or ""))
 
 
+# Questions about the ASSISTANT itself (not the user). Small models answer these
+# from training data — claiming they were made by OpenAI/Meta, or dumping their
+# own source code. We pin a single correct identity instead.
+_ABOUT_ASSISTANT_RE = re.compile(
+    r"(?:"
+    r"who\s+(?:are|r)\s+(?:you|u)\b|"
+    r"who\s+(?:built|made|created|designed|developed|coded|programmed|wrote)\s+(?:you|u|this|ultron)\b|"
+    r"who(?:'s|\s+is)\s+your\s+(?:creator|maker|builder|developer|author)\b|"
+    r"what(?:'?s|\s+is)?\s+your\s+name\b|"
+    r"what\s+(?:are|r)\s+(?:you|u)\s*\??\s*$|"
+    r"are\s+you\s+(?:ultron|an?\s+ai|a\s+bot|a\s+robot|chatgpt|claude|gpt|llama|human|real)\b|"
+    r"(?:tell\s+me\s+about|introduce)\s+y(?:ou)?rself\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# "what are you doing / working on / up to" is small-talk, NOT an identity question.
+_ASSISTANT_FALSE_POSITIVE_RE = re.compile(
+    r"what\s+(?:are|r)\s+(?:you|u)\s+(?:doing|working|up\s+to|talking|saying|gonna|going)",
+    re.IGNORECASE,
+)
+
+
+def is_about_assistant(message: str) -> bool:
+    """The user is asking who/what the assistant is — answer with a fixed identity."""
+    msg = message or ""
+    if _ASSISTANT_FALSE_POSITIVE_RE.search(msg):
+        return False
+    return bool(_ABOUT_ASSISTANT_RE.search(msg))
+
+
+def assistant_identity_answer(message: str) -> str:
+    """Deterministic identity. Never sourced from the LLM, so it can't drift."""
+    msg = (message or "").lower()
+    asks_builder = bool(re.search(
+        r"\b(built|made|created|designed|developed|coded|programmed|wrote|creator|maker|builder|developer|author)\b",
+        msg,
+    ))
+    if asks_builder:
+        return (
+            "I'm Ultron — your personal AI assistant, built by Arbin. "
+            "I run locally on your own laptop and I'm here to help with anything you need."
+        )
+    return (
+        "I'm Ultron — your personal AI assistant, built by Arbin. I run locally on "
+        "your laptop and can help with chat, coding, files, the web, and more. What do you need?"
+    )
+
+
 def lookup_self_facts(message: str, k: int = 5, min_hits: int = 1) -> list[str]:
     """Pull memories about the user that match the question. Empty list = we don't know."""
     hits = recall(message, k=k)

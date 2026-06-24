@@ -17,7 +17,7 @@ from agent.episodic import episodic_context, archive_turn
 from agent.knowledge_graph import kg_context, learn_from_text
 from agent.grounding import (
     is_self_referential, lookup_self_facts, refusal_for_self_question,
-    is_code_in_chat_failure,
+    is_code_in_chat_failure, is_about_assistant, assistant_identity_answer,
 )
 from rag.retriever import rag_context
 from config import LLM_MODEL, LLM_TEMPERATURE, LLM_NUM_CTX, LLM_NUM_PREDICT
@@ -59,6 +59,21 @@ def _full_context(query: str) -> str:
         + kg_context(query)
         + rag_context(query)
     )
+
+
+# Shared truthfulness floor. Small local models hallucinate identity ("I was made
+# by OpenAI") and system state ("it's been a while", "the laptop has been idle").
+# This block is concatenated into every mode prompt to pin both down.
+_IDENTITY_GUARD = (
+    "# Identity & truthfulness (non-negotiable)\n"
+    "- You are Ultron, built by Arbin, running locally on the user's own laptop. "
+    "You were NOT made by OpenAI, Anthropic, Meta, or Google. If asked who you are or who built you, "
+    "say exactly that — never invent a different origin and never dump or describe your own source code unless the user explicitly asks to see code.\n"
+    "- You have NO clock, calendar, session history, or sensor data unless it is given to you in the context below. "
+    "Never invent system state: do not claim how long it's 'been', that the laptop was 'idle', the date, the time, "
+    "battery level, weather, or 'last time we talked'. If you don't have a value in front of you, don't state one.\n"
+    "- Never invent facts about the user. Use only what's in RELEVANT MEMORIES below; if it's not there, say you don't have it.\n\n"
+)
 
 
 CHAT_PROMPT = """# CRITICAL OUTPUT RULES (read these first, every turn)
@@ -232,6 +247,12 @@ A router has already picked a focused subset of tools for THIS request — don't
 
 # Output rule
 Never output JSON or fake tool-call narration as your reply. Either you call a tool (the framework handles that) or you reply in plain prose. Never both. Never narrate "let me check" or "I'll search" — just do it silently and report the result."""
+
+
+# Prepend the shared truthfulness floor to every mode prompt.
+CHAT_PROMPT = _IDENTITY_GUARD + CHAT_PROMPT
+CODER_PROMPT = _IDENTITY_GUARD + CODER_PROMPT
+ULTRON_PROMPT = _IDENTITY_GUARD + ULTRON_PROMPT
 
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -1010,13 +1031,49 @@ def _is_chat_only(message: str, mode: str = "chat") -> bool:
     return True
 
 
+# Greeting sub-categories. A greeting has exactly one right shape (a short warm
+# line), so we answer it deterministically and never hand it to the LLM — an 8B
+# local model improvising a greeting fabricates filler ("it's been a while", "the
+# laptop has been idle for days") it has no data for.
+_GREET_THANKS_RE = re.compile(r"^\s*(thanks?|thank\s*you|thx|ty)\b", re.IGNORECASE)
+_GREET_BYE_RE = re.compile(r"^\s*(bye+|goodbye|cya|see\s*ya|good\s*night)\b", re.IGNORECASE)
+_GREET_ACK_RE = re.compile(r"^\s*(ok+|okay+|cool|nice|great|awesome|got\s*it|sounds\s*good)\b", re.IGNORECASE)
+_GREET_HOWRU_RE = re.compile(r"how\s*(are\s*you|('?s|s)\s*it\s*going)", re.IGNORECASE)
+
+
+def _canned_greeting(message: str) -> str:
+    """Deterministic warm one-liner for greetings/thanks/acks/farewells."""
+    msg = message.strip()
+    if _GREET_THANKS_RE.match(msg):
+        return random.choice(["Anytime.", "You got it.", "No problem — what's next?"])
+    if _GREET_BYE_RE.match(msg):
+        return random.choice(["See you.", "Catch you later.", "I'm here whenever you need me."])
+    if _GREET_ACK_RE.match(msg):
+        return random.choice(["Got it.", "Ready when you are.", "On it — what's next?"])
+    if _GREET_HOWRU_RE.search(msg):
+        return random.choice(["All good here — what do you need?", "Running fine. What's on your mind?"])
+    return random.choice([
+        "Hey — what do you need?",
+        "Hi! What can I do for you?",
+        "Hello. What's on your mind?",
+        "Ready when you are — what's up?",
+    ])
+
+
 def _chat_reply(message: str, mode: str = "chat") -> str:
     """Direct LLM call with no tools — friendly conversational reply.
 
-    Greetings skip context entirely (cheap & fast). Self-referential questions
-    take a deterministic path — if memory has nothing, we refuse instead of
-    letting the LLM hallucinate. Otherwise full memory+RAG context is injected.
+    Pure greetings and identity questions are answered deterministically (no LLM,
+    no hallucinated filler). Self-referential questions take a deterministic path —
+    if memory has nothing, we refuse instead of letting the LLM hallucinate.
+    Otherwise full memory+RAG context is injected.
     """
+    if _is_chitchat(message):
+        return _canned_greeting(message)
+
+    if is_about_assistant(message):
+        return assistant_identity_answer(message)
+
     if is_self_referential(message):
         facts = lookup_self_facts(message)
         if not facts:
@@ -1025,25 +1082,24 @@ def _chat_reply(message: str, mode: str = "chat") -> str:
         # answer is phrased naturally instead of a raw fact dump.
 
     inject = "" if _is_chitchat(message) else _full_context(message)
-    chitchat = _is_chitchat(message)
     llm = ChatOllama(
         model=LLM_MODEL,
-        temperature=0.5,
-        num_predict=120 if chitchat else 1500,
+        temperature=0.3,
+        num_predict=1500,
         num_ctx=2048 if inject else 1024,
     )
     sys = (
-        "You are Ultron — the user's personal AI on their own laptop.\n"
-        + ("Greetings get one warm sentence. " if chitchat else
-           "DEFAULT VERBOSITY: HIGH — answer like Claude does, not like a one-line chatbot. "
-           "For any substantive question (what is X, how does Y work, explain Z, how do I…) you MUST produce: "
-           "(1) a direct 1-2 sentence answer; "
-           "(2) the mechanism / step-by-step in 3-5 bullets; "
-           "(3) a real WORKING code example in a ``` block whenever the topic touches code — show the whole snippet, never paraphrase it in prose; "
-           "(4) a concrete real-world use case; "
-           "(5) common pitfalls if applicable. "
-           "Aim for 3-5 paragraphs. Being too short is a worse failure than being too long. "
-           "Use code blocks ```python / ```js / ```bash for every snippet. Never write 'and so on' or '// rest unchanged'. ")
+        "You are Ultron — the user's personal AI assistant, built by Arbin, running locally on their laptop.\n"
+        + _IDENTITY_GUARD
+        + "DEFAULT VERBOSITY: HIGH — answer like Claude does, not like a one-line chatbot. "
+          "For any substantive question (what is X, how does Y work, explain Z, how do I…) you MUST produce: "
+          "(1) a direct 1-2 sentence answer; "
+          "(2) the mechanism / step-by-step in 3-5 bullets; "
+          "(3) a real WORKING code example in a ``` block whenever the topic touches code — show the whole snippet, never paraphrase it in prose; "
+          "(4) a concrete real-world use case; "
+          "(5) common pitfalls if applicable. "
+          "Aim for 3-5 paragraphs. Being too short is a worse failure than being too long. "
+          "Use code blocks ```python / ```js / ```bash for every snippet. Never write 'and so on' or '// rest unchanged'. "
         + "If RELEVANT MEMORIES or RELEVANT DOCUMENTS are provided below, USE them as ground truth — "
         "they are facts the user has saved or uploaded. Cite documents inline as [1], [2] when you draw from them. "
         "Never say 'let me check' or 'I'll look that up' — just answer with what you know. "
@@ -1113,6 +1169,9 @@ def run_agent(message: str, history: list[dict] | None = None, mode: str = "chat
     shortcut = _intent_shortcut(message)
     if shortcut is not None:
         return shortcut["result"]
+
+    if is_about_assistant(message):
+        return assistant_identity_answer(message)
 
     if _is_chat_only(message, mode=mode):
         reply = _chat_reply(message, mode=mode)
@@ -1192,6 +1251,13 @@ def stream_agent(message: str, history: list[dict] | None = None, mode: str = "c
         yield {"type": "tool_result", "data": {"name": shortcut["name"], "content": shortcut["result"]}}
         yield {"type": "token", "data": shortcut["result"]}
         yield {"type": "final", "data": shortcut["result"]}
+        return
+
+    if is_about_assistant(message):
+        reply = assistant_identity_answer(message)
+        yield {"type": "router", "data": {"categories": ["identity"], "tool_count": 0}}
+        yield {"type": "token", "data": reply}
+        yield {"type": "final", "data": reply}
         return
 
     if _is_chat_only(message, mode=mode):
