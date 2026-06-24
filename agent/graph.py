@@ -1,6 +1,7 @@
 """Ultron agent — multi-mode + smart tool routing + streaming."""
 from __future__ import annotations
 
+import random
 import re
 from functools import lru_cache
 from typing import Iterator

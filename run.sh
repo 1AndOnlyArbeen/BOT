@@ -5,8 +5,8 @@ set -e
 cd "$(dirname "$0")"
 source .venv/bin/activate 2>/dev/null || true
 
-echo "==> Starting backend on http://localhost:8000"
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload &
+echo "==> Starting backend on http://localhost:8010"
+uvicorn backend.main:app --host 0.0.0.0 --port 8010 --reload &
 BACKEND_PID=$!
 
 if [ -d frontend/node_modules ]; then
